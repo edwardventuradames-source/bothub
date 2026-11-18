@@ -15,7 +15,7 @@ import {
 import { runtimeStore } from '../../lib/runtime-store.js';
 
 const BCRYPT_SALT_ROUNDS = 12;
-const REFRESH_TOKEN_TTL_DAYS = 7;
+const REFRESH_TOKEN_TTL_DAYS = 30;
 const PASSWORD_RESET_TTL_MINUTES = 30;
 const MILLISECONDS_PER_MINUTE = 60 * 1000;
 const MILLISECONDS_PER_DAY = 24 * 60 * MILLISECONDS_PER_MINUTE;

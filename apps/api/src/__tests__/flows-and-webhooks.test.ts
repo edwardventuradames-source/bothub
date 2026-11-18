@@ -246,6 +246,87 @@ describe('Server-Side Admin Provisioning, Flow Engine & Webhooks', () => {
     expect(chatwootReturnRes.statusCode).toBe(200);
     expect(chatwootReturnRes.json().action).toBe('returned_to_bot');
 
+    runtimeStore.bots.push({
+      id: testBotId,
+      organizationId: '00000000-0000-4000-8000-000000000100',
+      name: 'Marcos Bot',
+      description: 'Chatwoot Agent Bot',
+      phoneNumber: '+18097504293',
+      driver: 'CLOUD_API',
+      status: 'CONNECTED',
+      isActive: true,
+      activeFlowId: 'flow-cw-test',
+      activeFlowName: 'ByteMV principal',
+      timezone: 'America/Santo_Domingo',
+      outOfHoursMessage: 'Fuera de horario',
+      inactivityTimeoutMinutes: 15,
+      inactivityCloseMessage: 'Cerrado',
+      typingDelayMs: 500,
+      rateLimitPerMinute: 30,
+      messagesToday: 0,
+      activeConversations: 0,
+      handoffRate: 0,
+      qrCodeData: null,
+      qrExpiresAt: null,
+      lastConnectedAt: new Date().toISOString(),
+      chatwootConfig: runtimeStore.getChatwootConfigDto(testBotId),
+      cloudApiConfig: null,
+      businessHours: [],
+      quickReplies: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    runtimeStore.flows.push({
+      id: 'flow-cw-test',
+      organizationId: '00000000-0000-4000-8000-000000000100',
+      name: 'ByteMV principal',
+      description: 'Flujo Chatwoot',
+      botId: testBotId,
+      botName: 'Marcos Bot',
+      isMainMenu: true,
+      activeVersionNumber: 1,
+      draftVersion: {
+        id: 'fv-cw-1',
+        versionNumber: 1,
+        status: 'PUBLISHED',
+        nodes: [
+          {
+            id: 'n-trig',
+            type: 'TRIGGER',
+            position: { x: 0, y: 0 },
+            data: { title: 'Inicio', matchMode: 'FIRST_MESSAGE' }
+          },
+          {
+            id: 'n-msg',
+            type: 'MESSAGE',
+            position: { x: 100, y: 0 },
+            data: { title: 'Saludo', text: 'Hola {{nombre}}, soy Marcos de ByteMV.' }
+          }
+        ],
+        edges: [{ id: 'e-1', source: 'n-trig', target: 'n-msg' }],
+        publishedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      },
+      publishedVersion: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const chatwootIncomingRes = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/chatwoot/${testBotId}?token=wh_sec_bothub_ventas_2026`,
+      payload: {
+        event: 'message_created',
+        message_type: 'incoming',
+        content: 'Hola necesito ayuda',
+        conversation: { id: 8841 },
+        sender: { id: 501, name: 'Edward', type: 'contact' }
+      }
+    });
+    expect(chatwootIncomingRes.statusCode).toBe(200);
+    expect(chatwootIncomingRes.json().action).toBe('bot_flow_replied');
+
     await app.close();
   });
 });

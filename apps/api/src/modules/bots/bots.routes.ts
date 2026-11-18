@@ -196,6 +196,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     bot.updatedAt = new Date().toISOString();
+    runtimeStore.persistStateToDisk();
     return { bot };
   };
 

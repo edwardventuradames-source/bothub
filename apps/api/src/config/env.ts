@@ -1,8 +1,73 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 
 const DEFAULT_PORT = 4000;
 const EPHEMERAL_KEY_BYTES = 32;
+const SESSIONS_DIR = path.resolve(process.cwd(), 'sessions');
+const SERVER_SECRETS_FILE = path.join(SESSIONS_DIR, 'server-secrets.json');
+
+interface PersistedServerSecrets {
+  jwtAccessSecret: string;
+  jwtRefreshSecret: string;
+  encryptionKeyHex: string;
+}
+
+function loadOrCreatePersistedSecrets(): PersistedServerSecrets {
+  const isTestEnv =
+    process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+
+  if (!isTestEnv) {
+    try {
+      if (fs.existsSync(SERVER_SECRETS_FILE)) {
+        const raw = fs.readFileSync(SERVER_SECRETS_FILE, 'utf8');
+        const parsed = JSON.parse(raw) as Partial<PersistedServerSecrets>;
+        if (
+          typeof parsed.jwtAccessSecret === 'string' &&
+          parsed.jwtAccessSecret.length >= 32 &&
+          typeof parsed.jwtRefreshSecret === 'string' &&
+          parsed.jwtRefreshSecret.length >= 32 &&
+          typeof parsed.encryptionKeyHex === 'string' &&
+          parsed.encryptionKeyHex.length === 64
+        ) {
+          return {
+            jwtAccessSecret: parsed.jwtAccessSecret,
+            jwtRefreshSecret: parsed.jwtRefreshSecret,
+            encryptionKeyHex: parsed.encryptionKeyHex
+          };
+        }
+      }
+    } catch {
+      void 0;
+    }
+  }
+
+  const generated: PersistedServerSecrets = {
+    jwtAccessSecret: crypto.randomBytes(EPHEMERAL_KEY_BYTES).toString('hex'),
+    jwtRefreshSecret: crypto.randomBytes(EPHEMERAL_KEY_BYTES).toString('hex'),
+    encryptionKeyHex: crypto.randomBytes(EPHEMERAL_KEY_BYTES).toString('hex')
+  };
+
+  if (!isTestEnv) {
+    try {
+      if (!fs.existsSync(SESSIONS_DIR)) {
+        fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+      }
+      fs.writeFileSync(
+        SERVER_SECRETS_FILE,
+        JSON.stringify(generated, null, 2),
+        'utf8'
+      );
+    } catch {
+      void 0;
+    }
+  }
+
+  return generated;
+}
+
+const persistedSecrets = loadOrCreatePersistedSecrets();
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -13,17 +78,17 @@ const EnvSchema = z.object({
   JWT_ACCESS_SECRET: z
     .string()
     .min(32)
-    .default(() => crypto.randomBytes(EPHEMERAL_KEY_BYTES).toString('hex')),
+    .default(persistedSecrets.jwtAccessSecret),
   JWT_REFRESH_SECRET: z
     .string()
     .min(32)
-    .default(() => crypto.randomBytes(EPHEMERAL_KEY_BYTES).toString('hex')),
-  JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
-  JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+    .default(persistedSecrets.jwtRefreshSecret),
+  JWT_ACCESS_EXPIRES_IN: z.string().default('24h'),
+  JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
   ENCRYPTION_KEY_HEX: z
     .string()
     .length(64)
-    .default(() => crypto.randomBytes(EPHEMERAL_KEY_BYTES).toString('hex'))
+    .default(persistedSecrets.encryptionKeyHex)
 });
 
 const parsedEnv = EnvSchema.safeParse({

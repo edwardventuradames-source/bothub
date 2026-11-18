@@ -272,6 +272,7 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
       runtimeStore.flows.splice(idx, 1);
+      runtimeStore.persistStateToDisk();
       return { success: true };
     }
   );

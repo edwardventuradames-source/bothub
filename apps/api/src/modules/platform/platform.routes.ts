@@ -378,7 +378,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         request.headers['x-chatwoot-webhook-token'] ??
         (request.query as Record<string, string | undefined>).token;
       try {
-        const result = ChatwootService.processWebhookEvent(
+        const result = await ChatwootService.processWebhookEvent(
           request.params.botId,
           token,
           request.body,

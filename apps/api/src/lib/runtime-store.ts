@@ -22,6 +22,11 @@ export const DEFAULT_ORG_ID = '00000000-0000-4000-8000-000000000100';
 
 const SESSIONS_DIR = path.resolve(process.cwd(), 'sessions');
 const USERS_STORAGE_FILE = path.join(SESSIONS_DIR, 'users.json');
+const RUNTIME_STATE_FILE = path.join(SESSIONS_DIR, 'runtime-state.json');
+
+function isTestRuntime(): boolean {
+  return process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+}
 
 export interface StoredChatwootSecrets {
   baseUrl: string;
@@ -68,6 +73,77 @@ class RuntimeStore {
 
   constructor() {
     this.reloadUsersFromDisk();
+    this.reloadStateFromDisk();
+  }
+
+  public reloadStateFromDisk(): void {
+    if (isTestRuntime()) {
+      return;
+    }
+    try {
+      if (!fs.existsSync(RUNTIME_STATE_FILE)) {
+        return;
+      }
+      const raw = fs.readFileSync(RUNTIME_STATE_FILE, 'utf8');
+      const parsed = JSON.parse(raw) as {
+        bots?: BotDto[];
+        chatwootSecrets?: Array<[string, StoredChatwootSecrets]>;
+        cloudApiSecrets?: Array<[string, StoredCloudApiSecrets]>;
+        flows?: FlowDto[];
+        conversations?: ConversationDto[];
+        contacts?: ContactDto[];
+        logs?: BotLogDto[];
+        apiKeys?: ApiKeyDto[];
+        outboundWebhooks?: OutboundWebhookConfigDto[];
+      };
+
+      if (Array.isArray(parsed.bots)) this.bots = parsed.bots;
+      if (Array.isArray(parsed.chatwootSecrets)) {
+        this.chatwootSecrets = new Map(parsed.chatwootSecrets);
+      }
+      if (Array.isArray(parsed.cloudApiSecrets)) {
+        this.cloudApiSecrets = new Map(parsed.cloudApiSecrets);
+      }
+      if (Array.isArray(parsed.flows)) this.flows = parsed.flows;
+      if (Array.isArray(parsed.conversations)) this.conversations = parsed.conversations;
+      if (Array.isArray(parsed.contacts)) this.contacts = parsed.contacts;
+      if (Array.isArray(parsed.logs)) this.logs = parsed.logs;
+      if (Array.isArray(parsed.apiKeys)) this.apiKeys = parsed.apiKeys;
+      if (Array.isArray(parsed.outboundWebhooks)) {
+        this.outboundWebhooks = parsed.outboundWebhooks;
+      }
+    } catch {
+      void 0;
+    }
+  }
+
+  public persistStateToDisk(): void {
+    if (isTestRuntime()) {
+      return;
+    }
+    try {
+      if (!fs.existsSync(SESSIONS_DIR)) {
+        fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+      }
+      const payload = {
+        bots: this.bots,
+        chatwootSecrets: Array.from(this.chatwootSecrets.entries()),
+        cloudApiSecrets: Array.from(this.cloudApiSecrets.entries()),
+        flows: this.flows,
+        conversations: this.conversations,
+        contacts: this.contacts,
+        logs: this.logs,
+        apiKeys: this.apiKeys,
+        outboundWebhooks: this.outboundWebhooks
+      };
+      fs.writeFileSync(
+        RUNTIME_STATE_FILE,
+        JSON.stringify(payload, null, 2),
+        'utf8'
+      );
+    } catch {
+      void 0;
+    }
   }
 
   public reloadUsersFromDisk(): void {
@@ -152,8 +228,12 @@ class RuntimeStore {
     const bot = this.bots.find((item) => item.id === botId);
     if (bot) {
       bot.chatwootConfig = this.getChatwootConfigDto(botId);
+      bot.status = 'CONNECTED';
+      bot.isActive = true;
+      bot.lastConnectedAt = new Date().toISOString();
       bot.updatedAt = new Date().toISOString();
     }
+    this.persistStateToDisk();
   }
 
   public getChatwootConfigDto(botId: string) {
@@ -163,6 +243,9 @@ class RuntimeStore {
     }
     const rawApiToken = decryptSecret(stored.encryptedApiAccessToken);
     const rawWebhookToken = decryptSecret(stored.encryptedWebhookToken);
+    const endpointWithToken = rawWebhookToken
+      ? `/api/webhooks/chatwoot/${botId}?token=${encodeURIComponent(rawWebhookToken)}`
+      : `/api/webhooks/chatwoot/${botId}`;
     return {
       baseUrl: stored.baseUrl,
       accountId: stored.accountId,
@@ -170,7 +253,7 @@ class RuntimeStore {
       hasApiAccessToken: rawApiToken.length > 0,
       maskedApiAccessToken: maskSecretValue(rawApiToken),
       webhookTokenPreview: maskSecretValue(rawWebhookToken),
-      webhookEndpointPath: `/api/webhooks/chatwoot/${botId}`,
+      webhookEndpointPath: endpointWithToken,
       handoffReturnCommand: stored.handoffReturnCommand,
       isActive: stored.isActive,
       lastSyncedAt: stored.lastSyncedAt
@@ -214,6 +297,7 @@ class RuntimeStore {
       bot.cloudApiConfig = this.getCloudApiConfigDto(botId);
       bot.updatedAt = new Date().toISOString();
     }
+    this.persistStateToDisk();
   }
 
   public getCloudApiConfigDto(botId: string) {
@@ -264,6 +348,7 @@ class RuntimeStore {
     if (this.logs.length > 200) {
       this.logs.pop();
     }
+    this.persistStateToDisk();
     return logItem;
   }
 
@@ -279,6 +364,7 @@ class RuntimeStore {
       rawKeyPreview: rawSecret
     };
     this.apiKeys.unshift(newKey);
+    this.persistStateToDisk();
     return newKey;
   }
 

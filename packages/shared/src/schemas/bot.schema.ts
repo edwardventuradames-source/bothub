@@ -83,8 +83,8 @@ export const ChatwootConfigInputSchema = z.object({
   baseUrl: z.string().url(),
   accountId: z.number().int().positive(),
   inboxId: z.number().int().positive(),
-  apiAccessToken: z.string().min(8),
-  webhookToken: z.string().min(8),
+  apiAccessToken: z.string().min(6),
+  webhookToken: z.string().min(6).default('whsec_bothub_2026'),
   handoffReturnCommand: z.string().min(2).max(40).default('#bot'),
   isActive: z.boolean().optional().default(true)
 });

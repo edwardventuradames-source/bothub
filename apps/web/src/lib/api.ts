@@ -41,11 +41,60 @@ export class ApiRequestError extends Error {
   }
 }
 
+let activeRefreshPromise: Promise<string | null> | null = null;
+
+async function tryRefreshAccessToken(): Promise<string | null> {
+  if (activeRefreshPromise) {
+    return activeRefreshPromise;
+  }
+
+  const { refreshToken, setSession, clearSession } = useAuthStore.getState();
+  if (!refreshToken) {
+    clearSession();
+    return null;
+  }
+
+  activeRefreshPromise = (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken })
+      });
+
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearSession();
+        }
+        return null;
+      }
+
+      const data = (await response.json()) as AuthSessionResponse;
+      if (data.accessToken && data.refreshToken && data.user) {
+        setSession({
+          user: data.user,
+          accessToken: data.accessToken,
+          refreshToken: data.refreshToken
+        });
+        return data.accessToken;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      activeRefreshPromise = null;
+    }
+  })();
+
+  return activeRefreshPromise;
+}
+
 async function performRequest<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  isRetry = false
 ): Promise<T> {
-  const { accessToken, clearSession } = useAuthStore.getState();
+  const { accessToken } = useAuthStore.getState();
   const headers = new Headers(options.headers);
   if (!headers.has('Content-Type') && options.body) {
     headers.set('Content-Type', 'application/json');
@@ -59,12 +108,16 @@ async function performRequest<T>(
     headers
   });
 
+  if (response.status === 401 && !path.startsWith('/auth/') && !isRetry) {
+    const newAccessToken = await tryRefreshAccessToken();
+    if (newAccessToken) {
+      return performRequest<T>(path, options, true);
+    }
+  }
+
   const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
 
   if (!response.ok) {
-    if (response.status === 401 && !path.startsWith('/auth/')) {
-      clearSession();
-    }
     const errorCode = typeof data.error === 'string' ? data.error : 'API_ERROR';
     const errorMessage =
       typeof data.message === 'string'
