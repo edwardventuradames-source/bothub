@@ -5,10 +5,22 @@ import {
   loginHandler,
   logoutHandler,
   refreshHandler,
+  registerHandler,
   resetPasswordHandler
 } from './auth.controller.js';
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
+  app.post(
+    '/register',
+    {
+      schema: {
+        tags: ['Auth'],
+        summary: 'Crear cuenta de administrador y organización desde cero'
+      }
+    },
+    registerHandler
+  );
+
   app.post(
     '/login',
     {

@@ -1,17 +1,17 @@
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Lock, Mail, Sparkles } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, UserPlus } from 'lucide-react';
 import { authApi, ApiRequestError } from '../lib/api.js';
 import { useAuthStore } from '../store/auth.store.js';
 import { useThemeStore } from '../store/theme.store.js';
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { setSession, loginAsDemoAdmin } = useAuthStore();
+  const { setSession } = useAuthStore();
   const { resolvedTheme, toggleLightDark } = useThemeStore();
 
-  const [email, setEmail] = useState('admin@bothub.local');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -31,17 +31,12 @@ export function LoginPage() {
         setErrorMessage(error.message);
       } else {
         setErrorMessage(
-          'No se pudo conectar con la API. Puedes usar el botón de Modo Demo para explorar el panel Soft UI.'
+          'No se pudo conectar con el servidor API. Verifica que el backend esté activo.'
         );
       }
     } finally {
       setIsSubmitting(false);
     }
-  }
-
-  function handleInstantDemo(): void {
-    loginAsDemoAdmin();
-    navigate('/');
   }
 
   return (
@@ -71,7 +66,7 @@ export function LoginPage() {
           className="flex flex-col justify-center p-7 sm:p-10"
         >
           <span className="text-xs font-bold uppercase tracking-wider text-soft-blue">
-            Bienvenido de nuevo
+            Acceso a Plataforma
           </span>
           <h1 className="mt-1 text-2xl font-extrabold text-soft-ink">
             Inicia sesión en BotHub
@@ -111,7 +106,7 @@ export function LoginPage() {
                   required
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  placeholder="admin@bothub.local"
+                  placeholder="tu@empresa.com"
                   className="w-full rounded-xl border border-soft-line bg-soft-bg py-2.5 pl-10 pr-4 text-sm text-soft-ink placeholder:text-soft-muted focus:border-soft-blue focus:bg-soft-card focus:outline-none"
                 />
               </div>
@@ -149,6 +144,7 @@ export function LoginPage() {
                 />
                 <button
                   type="button"
+                  aria-pressed={showPassword}
                   onClick={() => setShowPassword((prev) => !prev)}
                   aria-label={
                     showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'
@@ -176,14 +172,13 @@ export function LoginPage() {
           </form>
 
           <div className="mt-5 border-t border-soft-line pt-5">
-            <button
-              type="button"
-              onClick={handleInstantDemo}
+            <Link
+              to="/register"
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-soft-line bg-soft-bg py-2.5 text-xs font-bold text-soft-ink transition-all hover:-translate-y-0.5 hover:border-soft-blue"
             >
-              <Sparkles className="h-4 w-4 text-soft-blue" />
-              <span>Acceso Instantáneo Vista Previa (Modo Demo)</span>
-            </button>
+              <UserPlus className="h-4 w-4 text-soft-blue" />
+              <span>¿No tienes cuenta? Crear usuario administrador desde cero</span>
+            </Link>
           </div>
         </motion.div>
 

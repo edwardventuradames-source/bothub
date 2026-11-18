@@ -75,19 +75,17 @@ export function BotConfigTabs({
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<BotConfigTab>('whatsapp');
 
-  const [cwBaseUrl, setCwBaseUrl] = useState('https://chat.bothub.local');
+  const [cwBaseUrl, setCwBaseUrl] = useState('');
   const [cwAccountId, setCwAccountId] = useState('1');
-  const [cwInboxId, setCwInboxId] = useState('12');
-  const [cwApiToken, setCwApiToken] = useState('cw_live_token_998877665544');
-  const [cwWebhookToken, setCwWebhookToken] = useState('wh_sec_bothub_2026');
+  const [cwInboxId, setCwInboxId] = useState('1');
+  const [cwApiToken, setCwApiToken] = useState('');
+  const [cwWebhookToken, setCwWebhookToken] = useState('');
   const [cwReturnCommand, setCwReturnCommand] = useState('#bot');
 
-  const [cloudPhoneId, setCloudPhoneId] = useState('109283746511223');
-  const [cloudWabaId, setCloudWabaId] = useState('998877665544332');
-  const [cloudAccessToken, setCloudAccessToken] = useState(
-    'EAAGm0PX4ZCpsBAJ998877665544332211'
-  );
-  const [cloudVerifyToken, setCloudVerifyToken] = useState('meta_verify_bothub_2026');
+  const [cloudPhoneId, setCloudPhoneId] = useState('');
+  const [cloudWabaId, setCloudWabaId] = useState('');
+  const [cloudAccessToken, setCloudAccessToken] = useState('');
+  const [cloudVerifyToken, setCloudVerifyToken] = useState('');
 
   const [newFaqTitle, setNewFaqTitle] = useState('');
   const [newFaqKeywords, setNewFaqKeywords] = useState('');

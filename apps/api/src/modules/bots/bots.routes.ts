@@ -11,10 +11,7 @@ import {
   DEFAULT_ORG_ID,
   runtimeStore
 } from '../../lib/runtime-store.js';
-import {
-  createDefaultBusinessHours,
-  createDefaultQuickReplies
-} from '../../lib/runtime-seed-graphs.js';
+import { createDefaultBusinessHours } from '../../lib/runtime-seed-graphs.js';
 import { BaileysDriver, CloudApiDriver } from '../whatsapp/whatsapp.driver.js';
 import { ChatwootService } from '../chatwoot/chatwoot.service.js';
 
@@ -114,16 +111,8 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         lastConnectedAt: null,
         chatwootConfig: null,
         cloudApiConfig: null,
-        businessHours: data.businessHours ?? createDefaultBusinessHours(),
-        quickReplies:
-          data.quickReplies?.map((item, idx) => ({
-            id: item.id ?? `qr-${idx}`,
-            title: item.title,
-            keywords: item.keywords,
-            responseText: item.responseText,
-            matchMode: item.matchMode,
-            isActive: item.isActive
-          })) ?? createDefaultQuickReplies(),
+        businessHours: createDefaultBusinessHours(),
+        quickReplies: [],
         createdAt: nowIso,
         updatedAt: nowIso
       };

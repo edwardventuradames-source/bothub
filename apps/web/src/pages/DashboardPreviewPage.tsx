@@ -14,7 +14,7 @@ interface KpiItem {
   emoji: string;
 }
 
-interface PreviewBotCard {
+interface DashboardBotCard {
   id: string;
   name: string;
   subtitle: string;
@@ -24,72 +24,42 @@ interface PreviewBotCard {
   isEnabled: boolean;
 }
 
-const DEFAULT_KPI_ITEMS: KpiItem[] = [
+const EMPTY_KPI_ITEMS: KpiItem[] = [
   {
     id: 'messages-today',
     label: 'Mensajes hoy',
-    value: 12480,
-    variation: '+18%',
+    value: 0,
+    variation: 'En vivo',
     isPositive: true,
     emoji: '💬'
   },
   {
     id: 'bots-online',
     label: 'Bots en línea',
-    value: 7,
-    variation: '+2',
+    value: 0,
+    variation: 'de 0',
     isPositive: true,
     emoji: '🤖'
   },
   {
     id: 'active-conversations',
     label: 'Conversaciones activas',
-    value: 342,
-    variation: '-2%',
-    isPositive: false,
+    value: 0,
+    variation: 'En vivo',
+    isPositive: true,
     emoji: '👥'
   },
   {
     id: 'handoff-transfers',
     label: 'Transferidas a agente',
-    value: 96,
-    variation: '+5%',
+    value: 0,
+    variation: 'Chatwoot',
     isPositive: true,
     emoji: '🎧'
   }
 ];
 
-const BAR_HEIGHT_PERCENTAGES = [60, 35, 20, 45, 100, 20, 70, 40, 100];
-
-const INITIAL_BOT_CARDS: PreviewBotCard[] = [
-  {
-    id: 'bot-gruas',
-    name: 'Soporte Grúas',
-    subtitle: 'Cloud API · Chatwoot inbox #3',
-    statusLabel: 'En línea',
-    statusType: 'online',
-    metaText: '1.2k msgs hoy',
-    isEnabled: true
-  },
-  {
-    id: 'bot-ventas',
-    name: 'Ventas',
-    subtitle: 'Baileys · Chatwoot inbox #5',
-    statusLabel: 'Esperando QR',
-    statusType: 'qr',
-    metaText: 'Escanear para conectar',
-    isEnabled: true
-  },
-  {
-    id: 'bot-cobranza',
-    name: 'Cobranza',
-    subtitle: 'Baileys · Chatwoot inbox #6',
-    statusLabel: 'Pausado',
-    statusType: 'off',
-    metaText: 'Último mensaje: ayer',
-    isEnabled: false
-  }
-];
+const BAR_HEIGHT_PERCENTAGES = [15, 15, 15, 15, 15, 15, 15, 15, 15];
 
 const FLOW_PREVIEW_NODES = [
   { id: 'start', label: '▶ Inicio', isPrimary: true },
@@ -101,46 +71,45 @@ const FLOW_PREVIEW_NODES = [
 ];
 
 export function DashboardPreviewPage() {
-  const [kpis, setKpis] = useState<KpiItem[]>(DEFAULT_KPI_ITEMS);
-  const [bots, setBots] = useState<PreviewBotCard[]>(INITIAL_BOT_CARDS);
+  const [kpis, setKpis] = useState<KpiItem[]>(EMPTY_KPI_ITEMS);
+  const [bots, setBots] = useState<DashboardBotCard[]>([]);
 
   useEffect(() => {
     async function syncLiveMetrics(): Promise<void> {
       try {
         const data = await platformApi.getDashboard();
-        if (data.bots.length > 0) {
-          setBots(
-            data.bots.map((b) => ({
-              id: b.id,
-              name: b.name,
-              subtitle: `${b.driver === 'BAILEYS' ? 'Baileys' : 'Cloud API'} · ${
-                b.chatwootConfig
-                  ? `Chatwoot inbox #${b.chatwootConfig.inboxId}`
-                  : b.phoneNumber
-              }`,
-              statusLabel:
-                b.status === 'CONNECTED'
-                  ? 'En línea'
-                  : b.status === 'WAITING_QR'
-                    ? 'Esperando QR'
-                    : 'Pausado',
-              statusType:
-                b.status === 'CONNECTED'
-                  ? 'online'
-                  : b.status === 'WAITING_QR'
-                    ? 'qr'
-                    : 'off',
-              metaText: `${b.messagesToday.toLocaleString()} msgs hoy`,
-              isEnabled: b.status !== 'PAUSED' && b.status !== 'DISCONNECTED'
-            }))
-          );
-        }
+        setBots(
+          data.bots.map((b) => ({
+            id: b.id,
+            name: b.name,
+            subtitle: `${b.driver === 'BAILEYS' ? 'Baileys' : 'Cloud API'} · ${
+              b.chatwootConfig
+                ? `Chatwoot inbox #${b.chatwootConfig.inboxId}`
+                : b.phoneNumber || 'Sin número'
+            }`,
+            statusLabel:
+              b.status === 'CONNECTED'
+                ? 'En línea'
+                : b.status === 'WAITING_QR'
+                  ? 'Esperando QR'
+                  : 'Pausado',
+            statusType:
+              b.status === 'CONNECTED'
+                ? 'online'
+                : b.status === 'WAITING_QR'
+                  ? 'qr'
+                  : 'off',
+            metaText: `${b.messagesToday.toLocaleString()} msgs hoy`,
+            isEnabled: b.status !== 'PAUSED' && b.status !== 'DISCONNECTED'
+          }))
+        );
+
         setKpis([
           {
             id: 'messages-today',
             label: 'Mensajes hoy',
-            value: data.metrics.messagesToday || 12480,
-            variation: '+18%',
+            value: data.metrics.messagesToday,
+            variation: 'En vivo',
             isPositive: true,
             emoji: '💬'
           },
@@ -155,16 +124,16 @@ export function DashboardPreviewPage() {
           {
             id: 'active-conversations',
             label: 'Conversaciones activas',
-            value: data.metrics.activeConversations || 342,
-            variation: '+12%',
+            value: data.metrics.activeConversations,
+            variation: 'En vivo',
             isPositive: true,
             emoji: '👥'
           },
           {
             id: 'handoff-transfers',
             label: 'Transferidas a agente',
-            value: data.metrics.handoffCountToday || 96,
-            variation: '+5%',
+            value: data.metrics.handoffCountToday,
+            variation: 'Chatwoot',
             isPositive: true,
             emoji: '🎧'
           }
@@ -313,29 +282,11 @@ export function DashboardPreviewPage() {
             ))}
           </div>
           <h4 className="mt-4 mb-0.5 text-[15px] font-bold text-soft-ink">
-            Usuarios activos
+            Actividad de sesiones
           </h4>
           <small className="text-xs text-soft-muted">
-            <strong className="text-soft-ink">(+23%)</strong> que la semana pasada
+            Métricas en tiempo real de tus bots activos
           </small>
-          <div className="mt-3 flex flex-wrap gap-5 text-xs text-soft-muted">
-            <span className="inline-flex items-center">
-              <i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px] bg-[#cb0c9f]" />
-              Usuarios
-            </span>
-            <span className="inline-flex items-center">
-              <i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px] bg-[#17c1e8]" />
-              Clics
-            </span>
-            <span className="inline-flex items-center">
-              <i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px] bg-[#fb8c00]" />
-              Ventas
-            </span>
-            <span className="inline-flex items-center">
-              <i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-[3px] bg-[#ea0606]" />
-              Items
-            </span>
-          </div>
         </motion.div>
 
         <motion.div
@@ -345,104 +296,105 @@ export function DashboardPreviewPage() {
           className="soft-card p-4"
         >
           <h4 className="m-0 text-[15px] font-bold text-soft-ink">
-            Resumen de mensajes
+            Tráfico de mensajes
           </h4>
-          <small className="text-xs font-semibold text-[#82d616]">
-            ↑ 4% más en 2026
+          <small className="text-xs font-semibold text-soft-muted">
+            Sincronización WhatsApp ↔ Chatwoot
           </small>
           <svg
-            viewBox="0 0 600 260"
+            viewBox="0 0 600 220"
             width="100%"
             className="mt-2 overflow-visible"
             role="img"
             aria-label="Gráfica de líneas de resumen de mensajes"
           >
-            <defs>
-              <linearGradient id="cyanAreaGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="#17c1e8" stopOpacity="0.35" />
-                <stop offset="1" stopColor="#17c1e8" stopOpacity="0" />
-              </linearGradient>
-            </defs>
             <g stroke="var(--line)" strokeDasharray="4">
-              <path d="M30 20H590M30 70H590M30 120H590M30 170H590M30 220H590" />
+              <path d="M30 20H590M30 70H590M30 120H590M30 170H590M30 200H590" />
             </g>
             <path
-              d="M30 220C90 150 120 140 160 190S230 40 280 30 340 170 380 150 450 110 490 150 560 140 590 30V220H30Z"
-              fill="url(#cyanAreaGrad)"
-            />
-            <path
               className="svg-line-animated"
-              d="M30 220C90 150 120 140 160 190S230 40 280 30 340 170 380 150 450 110 490 150 560 140 590 30"
+              d="M30 200H590"
               fill="none"
               stroke="#17c1e8"
-              strokeWidth="3"
-            />
-            <path
-              className="svg-line-animated"
-              d="M30 230C100 200 160 120 220 130S320 150 360 120 450 160 490 190 560 130 590 110"
-              fill="none"
-              stroke="var(--ink)"
               strokeWidth="3"
             />
           </svg>
         </motion.div>
       </section>
 
-      <section
-        aria-label="Estado de sesiones de bots"
-        className="grid grid-cols-1 gap-5 md:grid-cols-3"
-      >
-        {bots.map((bot, idx) => (
-          <motion.div
-            key={bot.id}
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.42 + idx * 0.06 }}
-            whileHover={{ y: -4 }}
-            className="soft-card p-4"
-          >
-            <h4 className="m-0 mb-0.5 text-[15px] font-bold text-soft-ink">
-              {bot.name}
-            </h4>
-            <small className="block text-xs text-soft-muted">
-              {bot.subtitle}
-            </small>
-
-            <div className="my-2.5 inline-flex items-center gap-1.5 text-xs font-bold text-soft-ink">
-              <span
-                className={cn(
-                  'h-2 w-2 rounded-full',
-                  bot.statusType === 'online' && 'dot-online bg-[#82d616]',
-                  bot.statusType === 'qr' && 'bg-[#fb8c00]',
-                  bot.statusType === 'off' && 'bg-[#adb5bd]'
-                )}
-              />
-              <span>{bot.statusLabel}</span>
+      <section aria-label="Estado de sesiones de bots">
+        {bots.length === 0 ? (
+          <div className="soft-card flex flex-wrap items-center justify-between gap-4 p-6">
+            <div>
+              <h4 className="text-base font-extrabold text-soft-ink">
+                Aún no tienes bots creados
+              </h4>
+              <p className="mt-1 text-xs text-soft-muted">
+                Tu entorno está completamente limpio y sin datos de prueba. Crea tu primer bot para conectarlo por código QR o WhatsApp Cloud API.
+              </p>
             </div>
-
-            <div className="flex items-center justify-between border-t border-soft-line pt-2.5 text-xs text-soft-muted">
-              <span>{bot.metaText}</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={bot.isEnabled}
-                aria-label={`Alternar estado de ${bot.name}`}
-                onClick={() => void handleToggleBot(bot.id)}
-                className={cn(
-                  'relative h-5 w-9 cursor-pointer rounded-full border-0 transition-colors duration-200',
-                  bot.isEnabled ? 'bg-brand-gradient' : 'bg-[#ced4da]'
-                )}
+            <Link
+              to="/bots"
+              className="rounded-xl bg-brand-gradient px-4 py-2.5 text-xs font-extrabold text-white shadow-brand-icon"
+            >
+              + Crear mi primer Bot
+            </Link>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+            {bots.map((bot, idx) => (
+              <motion.div
+                key={bot.id}
+                initial={{ opacity: 0, y: 18 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: 0.42 + idx * 0.06 }}
+                whileHover={{ y: -4 }}
+                className="soft-card p-4"
               >
-                <span
-                  className={cn(
-                    'absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all duration-200',
-                    bot.isEnabled ? 'right-0.5' : 'right-[18px]'
-                  )}
-                />
-              </button>
-            </div>
-          </motion.div>
-        ))}
+                <h4 className="m-0 mb-0.5 text-[15px] font-bold text-soft-ink">
+                  {bot.name}
+                </h4>
+                <small className="block text-xs text-soft-muted">
+                  {bot.subtitle}
+                </small>
+
+                <div className="my-2.5 inline-flex items-center gap-1.5 text-xs font-bold text-soft-ink">
+                  <span
+                    className={cn(
+                      'h-2 w-2 rounded-full',
+                      bot.statusType === 'online' && 'dot-online bg-[#82d616]',
+                      bot.statusType === 'qr' && 'bg-[#fb8c00]',
+                      bot.statusType === 'off' && 'bg-[#adb5bd]'
+                    )}
+                  />
+                  <span>{bot.statusLabel}</span>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-soft-line pt-2.5 text-xs text-soft-muted">
+                  <span>{bot.metaText}</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={bot.isEnabled}
+                    aria-label={`Alternar estado de ${bot.name}`}
+                    onClick={() => void handleToggleBot(bot.id)}
+                    className={cn(
+                      'relative h-5 w-9 cursor-pointer rounded-full border-0 transition-colors duration-200',
+                      bot.isEnabled ? 'bg-brand-gradient' : 'bg-[#ced4da]'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all duration-200',
+                        bot.isEnabled ? 'right-0.5' : 'right-[18px]'
+                      )}
+                    />
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
       </section>
 
       <motion.section
@@ -453,7 +405,7 @@ export function DashboardPreviewPage() {
       >
         <div className="flex items-center justify-between">
           <h4 className="m-0 text-[15px] font-bold text-soft-ink">
-            Editor de flujos · Menú principal
+            Constructor de Flujos Conversacionales
           </h4>
           <Link
             to="/flows"

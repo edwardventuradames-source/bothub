@@ -1,8 +1,10 @@
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import {
   AuthUserDto,
   ForgotPasswordInput,
   LoginInput,
+  RegisterInput,
   ResetPasswordInput
 } from '@bothub/shared';
 import { prisma } from '../../lib/prisma.js';
@@ -62,6 +64,140 @@ function mapUserToDto(userRecord: {
     organizationName: userRecord.organization.name,
     avatarUrl: userRecord.avatarUrl ?? null
   };
+}
+
+function buildSlugFromName(name: string): string {
+  const baseSlug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+  return `${baseSlug || 'org'}-${crypto.randomUUID().slice(0, 6)}`;
+}
+
+export async function registerUserAccount(
+  input: RegisterInput,
+  metadata?: { userAgent?: string; ipAddress?: string }
+): Promise<IssuedSessionData> {
+  const normalizedEmail = input.email.toLowerCase();
+  const passwordHash = await bcrypt.hash(input.password, BCRYPT_SALT_ROUNDS);
+  const rawRefreshToken = generateRandomOpaqueToken(40);
+  const tokenHash = hashOpaqueToken(rawRefreshToken);
+  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_DAYS * MILLISECONDS_PER_DAY);
+
+  try {
+    const existing = await prisma.user.findUnique({
+      where: { email: normalizedEmail }
+    });
+    if (existing) {
+      throw new AuthError(
+        'EMAIL_ALREADY_REGISTERED',
+        'Ya existe una cuenta registrada con este correo electrónico.',
+        409
+      );
+    }
+
+    const organization = await prisma.organization.create({
+      data: {
+        name: input.organizationName,
+        slug: buildSlugFromName(input.organizationName)
+      }
+    });
+
+    const createdUser = await prisma.user.create({
+      data: {
+        organizationId: organization.id,
+        email: normalizedEmail,
+        passwordHash,
+        name: input.name,
+        role: 'ADMIN',
+        isActive: true,
+        lastLoginAt: new Date()
+      },
+      include: { organization: true }
+    });
+
+    await prisma.refreshToken.create({
+      data: {
+        userId: createdUser.id,
+        tokenHash,
+        userAgent: metadata?.userAgent,
+        ipAddress: metadata?.ipAddress,
+        expiresAt
+      }
+    });
+
+    const dto = mapUserToDto(createdUser);
+    runtimeStore.users.push({
+      id: dto.id,
+      organizationId: dto.organizationId,
+      organizationName: dto.organizationName,
+      name: dto.name,
+      email: dto.email,
+      role: dto.role,
+      isActive: true,
+      lastLoginAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      passwordHash
+    });
+
+    return {
+      user: dto,
+      rawRefreshToken
+    };
+  } catch (err) {
+    if (err instanceof AuthError) {
+      throw err;
+    }
+
+    const existsInMem = runtimeStore.users.some(
+      (u) => u.email.toLowerCase() === normalizedEmail
+    );
+    if (existsInMem) {
+      throw new AuthError(
+        'EMAIL_ALREADY_REGISTERED',
+        'Ya existe una cuenta registrada con este correo electrónico.',
+        409
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const userId = crypto.randomUUID();
+    const organizationId = crypto.randomUUID();
+
+    const newMemUser = {
+      id: userId,
+      organizationId,
+      organizationName: input.organizationName,
+      name: input.name,
+      email: normalizedEmail,
+      role: 'ADMIN' as const,
+      isActive: true,
+      lastLoginAt: nowIso,
+      createdAt: nowIso,
+      passwordHash
+    };
+
+    runtimeStore.users.push(newMemUser);
+    fallbackRefreshTokens.set(tokenHash, {
+      userId,
+      expiresAt: expiresAt.getTime(),
+      revoked: false
+    });
+
+    return {
+      user: {
+        id: newMemUser.id,
+        email: newMemUser.email,
+        name: newMemUser.name,
+        role: newMemUser.role,
+        organizationId: newMemUser.organizationId,
+        organizationName: newMemUser.organizationName,
+        avatarUrl: null
+      },
+      rawRefreshToken
+    };
+  }
 }
 
 export async function authenticateWithPassword(

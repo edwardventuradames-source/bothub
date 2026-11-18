@@ -1,14 +1,20 @@
 import { useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Sidebar } from './Sidebar.js';
 import { Topbar } from './Topbar.js';
 import { ThemeConfigurator } from './ThemeConfigurator.js';
+import { useAuthStore } from '../../store/auth.store.js';
 
 export function AppLayout() {
+  const { isAuthenticated } = useAuthStore();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const location = useLocation();
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
 
   return (
     <div className="grid min-h-screen grid-cols-1 gap-6 p-4 lg:grid-cols-[250px_1fr]">

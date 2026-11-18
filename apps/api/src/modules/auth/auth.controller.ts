@@ -3,6 +3,7 @@ import {
   ForgotPasswordInputSchema,
   LoginInputSchema,
   RefreshTokenInputSchema,
+  RegisterInputSchema,
   ResetPasswordInputSchema
 } from '@bothub/shared';
 import {
@@ -11,10 +12,55 @@ import {
   completePasswordReset,
   createPasswordResetRequest,
   getUserProfileById,
+  registerUserAccount,
   revokeRefreshToken,
   rotateRefreshToken
 } from './auth.service.js';
 import { env } from '../../config/env.js';
+
+export async function registerHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  const parsed = RegisterInputSchema.safeParse(request.body);
+  if (!parsed.success) {
+    reply.status(400).send({
+      error: 'VALIDATION_ERROR',
+      message: 'Datos de registro inválidos. Verifica nombre, organización, correo y contraseña (mín. 8 caracteres).',
+      details: parsed.error.flatten()
+    });
+    return;
+  }
+
+  try {
+    const session = await registerUserAccount(parsed.data, {
+      userAgent: request.headers['user-agent'],
+      ipAddress: request.ip
+    });
+
+    const accessToken = await reply.jwtSign({
+      sub: session.user.id,
+      email: session.user.email,
+      role: session.user.role,
+      organizationId: session.user.organizationId
+    });
+
+    reply.status(201).send({
+      accessToken,
+      refreshToken: session.rawRefreshToken,
+      user: session.user
+    });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      reply.status(error.statusCode).send({
+        error: error.code,
+        message: error.message
+      });
+      return;
+    }
+    throw error;
+  }
+}
 
 export async function loginHandler(
   request: FastifyRequest,

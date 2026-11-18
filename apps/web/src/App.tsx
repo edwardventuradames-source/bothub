@@ -3,6 +3,7 @@ import { MotionConfig } from 'framer-motion';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppLayout } from './components/layout/AppLayout.js';
 import { LoginPage } from './pages/LoginPage.js';
+import { RegisterPage } from './pages/RegisterPage.js';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage.js';
 import { DashboardPreviewPage } from './pages/DashboardPreviewPage.js';
 import { BotsPage } from './pages/BotsPage.js';
@@ -29,6 +30,7 @@ export function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route element={<AppLayout />}>
               <Route path="/" element={<DashboardPreviewPage />} />

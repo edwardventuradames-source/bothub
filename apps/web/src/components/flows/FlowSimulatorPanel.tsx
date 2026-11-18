@@ -42,10 +42,7 @@ export function FlowSimulatorPanel({
   const [awaitingQuestionNodeId, setAwaitingQuestionNodeId] = useState<string | null>(
     null
   );
-  const [variables, setVariables] = useState<Record<string, string>>({
-    nombre: 'Mariana Torres',
-    telefono: '+57 301 554 9021'
-  });
+  const [variables, setVariables] = useState<Record<string, string>>({});
   const [tags, setTags] = useState<string[]>([]);
   const [traceLogs, setTraceLogs] = useState<FlowExecutionStepLog[]>([]);
   const [handoffBanner, setHandoffBanner] = useState<string | null>(null);
@@ -135,10 +132,7 @@ export function FlowSimulatorPanel({
   function handleResetSession(): void {
     setCurrentNodeId(null);
     setAwaitingQuestionNodeId(null);
-    setVariables({
-      nombre: 'Mariana Torres',
-      telefono: '+57 301 554 9021'
-    });
+    setVariables({});
     setTags([]);
     setTraceLogs([]);
     setHandoffBanner(null);

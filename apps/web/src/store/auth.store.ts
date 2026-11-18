@@ -11,21 +11,10 @@ interface AuthState {
     accessToken: string;
     refreshToken: string;
   }) => void;
-  loginAsDemoAdmin: () => void;
   clearSession: () => void;
 }
 
 const STORAGE_AUTH_KEY = 'bothub-auth-session';
-
-const DEMO_ADMIN_USER: AuthUserDto = {
-  id: '00000000-0000-4000-8000-000000000001',
-  email: 'admin@bothub.local',
-  name: 'Admin BotHub',
-  role: 'ADMIN',
-  organizationId: '00000000-0000-4000-8000-000000000100',
-  organizationName: 'BotHub Enterprise',
-  avatarUrl: null
-};
 
 function loadPersistedSession(): {
   user: AuthUserDto | null;
@@ -45,6 +34,13 @@ function loadPersistedSession(): {
       accessToken: string;
       refreshToken: string;
     };
+    if (
+      !parsed.accessToken ||
+      parsed.accessToken === 'demo-session-mode-active'
+    ) {
+      localStorage.removeItem(STORAGE_AUTH_KEY);
+      return { user: null, accessToken: null, refreshToken: null };
+    }
     return {
       user: parsed.user ?? null,
       accessToken: parsed.accessToken ?? null,
@@ -76,23 +72,6 @@ export const useAuthStore = create<AuthState>((set) => ({
       user,
       accessToken,
       refreshToken,
-      isAuthenticated: true
-    });
-  },
-
-  loginAsDemoAdmin: () => {
-    const demoPayload = {
-      user: DEMO_ADMIN_USER,
-      accessToken: 'demo-session-mode-active',
-      refreshToken: 'demo-refresh-mode-active'
-    };
-    try {
-      localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(demoPayload));
-    } catch {
-      void 0;
-    }
-    set({
-      ...demoPayload,
       isAuthenticated: true
     });
   },

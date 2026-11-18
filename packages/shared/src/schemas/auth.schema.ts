@@ -9,6 +9,14 @@ export const LoginInputSchema = z.object({
 });
 export type LoginInput = z.infer<typeof LoginInputSchema>;
 
+export const RegisterInputSchema = z.object({
+  name: z.string().min(2).max(80).trim(),
+  organizationName: z.string().min(2).max(100).trim(),
+  email: z.string().email().trim().toLowerCase(),
+  password: z.string().min(8).max(128)
+});
+export type RegisterInput = z.infer<typeof RegisterInputSchema>;
+
 export const RefreshTokenInputSchema = z.object({
   refreshToken: z.string().min(16)
 });

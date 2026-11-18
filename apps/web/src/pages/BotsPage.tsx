@@ -27,7 +27,7 @@ export function BotsPage() {
   } | null>(null);
 
   const [newBotName, setNewBotName] = useState('');
-  const [newBotPhone, setNewBotPhone] = useState('+57 300 123 4567');
+  const [newBotPhone, setNewBotPhone] = useState('');
   const [newBotDescription, setNewBotDescription] = useState('');
   const [newBotDriver, setNewBotDriver] = useState<WhatsAppDriverType>('BAILEYS');
   const [newBotFlowId, setNewBotFlowId] = useState<string>('');
