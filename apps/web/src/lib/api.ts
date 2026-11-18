@@ -250,6 +250,10 @@ export const flowsApi = {
       method: 'POST',
       body: JSON.stringify(input)
     }),
+  restoreVersion: (id: string, versionId: string) =>
+    performRequest<{ flow: FlowDto }>(`/flows/${id}/versions/${versionId}/restore`, {
+      method: 'POST'
+    }),
   remove: (id: string) =>
     performRequest<{ success: boolean }>(`/flows/${id}`, {
       method: 'DELETE'

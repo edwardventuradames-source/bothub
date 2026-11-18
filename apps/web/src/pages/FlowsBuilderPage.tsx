@@ -14,6 +14,7 @@ import {
 import {
   CheckCircle2,
   GitBranch,
+  History,
   Plus,
   Rocket,
   Save
@@ -458,6 +459,24 @@ export function FlowsBuilderPage() {
     setStatusMessage(`Nuevo flujo "${flow.name}" creado y listo para editar.`);
   }
 
+  async function handleRestoreVersion(versionId: string): Promise<void> {
+    if (!activeFlow || !versionId) return;
+    setIsSaving(true);
+    try {
+      const { flow } = await flowsApi.restoreVersion(activeFlow.id, versionId);
+      setFlows((prev) => prev.map((f) => (f.id === flow.id ? flow : f)));
+      setNodes(mapFlowNodesToReactFlow(flow.draftVersion.nodes, null));
+      setEdges(mapFlowEdgesToReactFlow(flow.draftVersion.edges));
+      setSelectedNodeId(flow.draftVersion.nodes[0]?.id ?? null);
+      setHighlightedNodeId(null);
+      setStatusMessage(
+        `⏪ Flujo restaurado a la versión v${flow.draftVersion.versionNumber} (${flow.draftVersion.status === 'PUBLISHED' ? 'Publicada' : 'Borrador'}).`
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <section className="soft-card flex flex-wrap items-center justify-between gap-4 p-5">
@@ -491,6 +510,34 @@ export function FlowsBuilderPage() {
                 <Plus className="h-3.5 w-3.5" />
                 <span>Nuevo Flujo</span>
               </button>
+
+              {activeFlow?.versions && activeFlow.versions.length > 0 ? (
+                <div className="inline-flex items-center gap-1.5 rounded-xl border border-soft-line bg-soft-bg px-2.5 py-1">
+                  <History className="h-3.5 w-3.5 text-soft-blue" />
+                  <label htmlFor="flow-version-selector" className="sr-only">
+                    Restaurar versión anterior
+                  </label>
+                  <select
+                    id="flow-version-selector"
+                    disabled={isSaving}
+                    value={activeFlow.draftVersion.id}
+                    onChange={(e) => void handleRestoreVersion(e.target.value)}
+                    className="bg-transparent text-xs font-bold text-soft-ink focus:outline-none"
+                  >
+                    {activeFlow.versions.map((ver) => (
+                      <option key={ver.id} value={ver.id}>
+                        v{ver.versionNumber} ·{' '}
+                        {ver.status === 'PUBLISHED' ? 'Publicada' : 'Borrador'} (
+                        {new Date(ver.createdAt).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                        )
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
             </div>
             <p className="mt-1 text-xs text-soft-muted">
               {activeFlow?.description ??

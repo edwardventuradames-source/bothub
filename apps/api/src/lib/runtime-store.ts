@@ -18,9 +18,11 @@ import {
   generateRandomOpaqueToken
 } from './crypto.js';
 
+import { resolveSessionsDir } from '../config/env.js';
+
 export const DEFAULT_ORG_ID = '00000000-0000-4000-8000-000000000100';
 
-const SESSIONS_DIR = path.resolve(process.cwd(), 'sessions');
+const SESSIONS_DIR = resolveSessionsDir();
 const USERS_STORAGE_FILE = path.join(SESSIONS_DIR, 'users.json');
 const RUNTIME_STATE_FILE = path.join(SESSIONS_DIR, 'runtime-state.json');
 

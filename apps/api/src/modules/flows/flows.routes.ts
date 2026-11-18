@@ -101,6 +101,16 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         }
       ];
 
+      const initialDraftVersion = {
+        id: `fv-${crypto.randomUUID().slice(0, 8)}`,
+        versionNumber: 1,
+        status: 'DRAFT' as const,
+        nodes: starterNodes,
+        edges: starterEdges,
+        publishedAt: null,
+        createdAt: nowIso
+      };
+
       const newFlow: FlowDto = {
         id: `flow-${crypto.randomUUID().slice(0, 8)}`,
         organizationId: request.user?.organizationId ?? DEFAULT_ORG_ID,
@@ -111,16 +121,9 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         botName: targetBot?.name ?? null,
         isMainMenu: data.isMainMenu,
         activeVersionNumber: 1,
-        draftVersion: {
-          id: `fv-${crypto.randomUUID().slice(0, 8)}`,
-          versionNumber: 1,
-          status: 'DRAFT',
-          nodes: starterNodes,
-          edges: starterEdges,
-          publishedAt: null,
-          createdAt: nowIso
-        },
+        draftVersion: initialDraftVersion,
         publishedVersion: null,
+        versions: [structuredClone(initialDraftVersion)],
         createdAt: nowIso,
         updatedAt: nowIso
       };
@@ -188,15 +191,25 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         ? flow.activeVersionNumber + 1
         : flow.draftVersion.versionNumber;
 
-      flow.draftVersion = {
+      const savedSnapshot = {
         id: `fv-${crypto.randomUUID().slice(0, 8)}`,
         versionNumber: nextVersionNum,
-        status: data.publish ? 'PUBLISHED' : 'DRAFT',
+        status: data.publish ? ('PUBLISHED' as const) : ('DRAFT' as const),
         nodes: data.nodes,
         edges: data.edges,
         publishedAt: data.publish ? nowIso : null,
         createdAt: nowIso
       };
+
+      flow.draftVersion = savedSnapshot;
+
+      if (!Array.isArray(flow.versions)) {
+        flow.versions = [];
+      }
+      flow.versions.unshift(structuredClone(savedSnapshot));
+      if (flow.versions.length > 25) {
+        flow.versions = flow.versions.slice(0, 25);
+      }
 
       if (data.publish) {
         flow.activeVersionNumber = nextVersionNum;
@@ -212,6 +225,52 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         message: data.publish
           ? `Flujo "${flow.name}" publicado en versión v${flow.activeVersionNumber} (${data.nodes.length} nodos).`
           : `Borrador guardado en "${flow.name}" (${data.nodes.length} nodos, ${data.edges.length} conexiones).`
+      });
+
+      return { flow };
+    }
+  );
+
+  app.post<{ Params: { id: string; versionId: string } }>(
+    '/:id/versions/:versionId/restore',
+    {
+      preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
+      schema: {
+        tags: ['Flows'],
+        summary: 'Restaurar una versión anterior del flujo'
+      }
+    },
+    async (request, reply) => {
+      const flow = runtimeStore.flows.find((item) => item.id === request.params.id);
+      if (!flow) {
+        return reply.status(404).send({
+          error: 'FLOW_NOT_FOUND',
+          message: 'El flujo no existe.'
+        });
+      }
+
+      const history = Array.isArray(flow.versions) ? flow.versions : [];
+      const targetVersion = history.find((v) => v.id === request.params.versionId);
+      if (!targetVersion) {
+        return reply.status(404).send({
+          error: 'VERSION_NOT_FOUND',
+          message: 'La versión solicitada no existe en el historial.'
+        });
+      }
+
+      const nowIso = new Date().toISOString();
+      flow.draftVersion = structuredClone(targetVersion);
+      flow.activeVersionNumber = targetVersion.versionNumber;
+      if (targetVersion.status === 'PUBLISHED') {
+        flow.publishedVersion = structuredClone(targetVersion);
+      }
+      flow.updatedAt = nowIso;
+
+      runtimeStore.appendLog({
+        botId: flow.botId,
+        level: 'INFO',
+        event: 'flow.version_restored',
+        message: `Flujo "${flow.name}" restaurado a la versión v${targetVersion.versionNumber} (${targetVersion.status}).`
       });
 
       return { flow };

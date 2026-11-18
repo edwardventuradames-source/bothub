@@ -5,7 +5,19 @@ import { z } from 'zod';
 
 const DEFAULT_PORT = 4000;
 const EPHEMERAL_KEY_BYTES = 32;
-const SESSIONS_DIR = path.resolve(process.cwd(), 'sessions');
+
+export function resolveSessionsDir(): string {
+  if (process.env.SESSIONS_DIR) {
+    return path.resolve(process.env.SESSIONS_DIR);
+  }
+  const monorepoApiDir = path.resolve(process.cwd(), 'apps/api');
+  if (fs.existsSync(monorepoApiDir)) {
+    return path.join(monorepoApiDir, 'sessions');
+  }
+  return path.resolve(process.cwd(), 'sessions');
+}
+
+const SESSIONS_DIR = resolveSessionsDir();
 const SERVER_SECRETS_FILE = path.join(SESSIONS_DIR, 'server-secrets.json');
 
 interface PersistedServerSecrets {

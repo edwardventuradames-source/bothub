@@ -136,6 +136,7 @@ export interface FlowDto {
   activeVersionNumber: number;
   draftVersion: FlowVersionDto;
   publishedVersion: FlowVersionDto | null;
+  versions?: FlowVersionDto[];
   updatedAt: string;
   createdAt: string;
 }

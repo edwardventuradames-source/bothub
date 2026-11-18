@@ -45,6 +45,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
+      SESSIONS_DIR: /app/apps/api/sessions
       DATABASE_URL: ${DATABASE_URL:-postgresql://bothub:bothub_pg_local_2026@postgres:5432/bothub?schema=public}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-}
