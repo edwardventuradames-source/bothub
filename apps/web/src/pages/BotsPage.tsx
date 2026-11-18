@@ -29,7 +29,7 @@ export function BotsPage() {
   const [newBotName, setNewBotName] = useState('');
   const [newBotPhone, setNewBotPhone] = useState('');
   const [newBotDescription, setNewBotDescription] = useState('');
-  const [newBotDriver, setNewBotDriver] = useState<WhatsAppDriverType>('CLOUD_API');
+  const [newBotDriver, setNewBotDriver] = useState<WhatsAppDriverType>('CHATWOOT');
   const [newBotFlowId, setNewBotFlowId] = useState<string>('');
 
   const selectedBot = bots.find((b) => b.id === selectedBotId) ?? bots[0] ?? null;
@@ -224,13 +224,13 @@ export function BotsPage() {
               <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-soft-bg p-2.5 text-center">
                 <div>
                   <div className="text-[10px] font-bold uppercase text-soft-muted">
-                    Driver
+                    Conexión
                   </div>
                   <div className="mt-0.5 text-xs font-extrabold text-soft-ink">
-                    {bot.driver === 'BAILEYS'
-                      ? 'Baileys QR'
-                      : bot.chatwootConfig?.isActive && !bot.cloudApiConfig
-                        ? 'Chatwoot Bot'
+                    {bot.driver === 'CHATWOOT'
+                      ? 'Solo Chatwoot'
+                      : bot.driver === 'BAILEYS'
+                        ? 'Baileys QR'
                         : 'Cloud API'}
                   </div>
                 </div>
@@ -338,41 +338,22 @@ export function BotsPage() {
             />
           </div>
 
-          <div>
-            <label
-              htmlFor="new-bot-phone"
-              className="mb-1 block text-xs font-bold text-soft-ink"
-            >
-              Número de WhatsApp (Opcional en modo Solo Chatwoot)
-            </label>
-            <input
-              id="new-bot-phone"
-              name="phoneNumber"
-              type="tel"
-              autoComplete="tel"
-              placeholder="Ej: +18097504293 (o déjalo vacío si solo usas Chatwoot)"
-              value={newBotPhone}
-              onChange={(e) => setNewBotPhone(e.target.value)}
-              className="w-full rounded-xl border border-soft-line bg-soft-bg px-3.5 py-2 text-xs text-soft-ink"
-            />
-          </div>
-
           <fieldset className="rounded-xl border border-soft-line bg-soft-bg p-3">
             <legend className="px-1 text-xs font-bold text-soft-ink">
               Modo de Conexión del Bot
             </legend>
-            <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:gap-4">
+            <div className="mt-1.5 flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <input
-                  id="driver-cloud"
+                  id="driver-chatwoot"
                   type="radio"
                   name="driver"
-                  value="CLOUD_API"
-                  checked={newBotDriver === 'CLOUD_API'}
-                  onChange={() => setNewBotDriver('CLOUD_API')}
+                  value="CHATWOOT"
+                  checked={newBotDriver === 'CHATWOOT'}
+                  onChange={() => setNewBotDriver('CHATWOOT')}
                 />
-                <label htmlFor="driver-cloud" className="text-xs font-bold text-soft-ink">
-                  Solo Chatwoot (Agent Bot) / Cloud API
+                <label htmlFor="driver-chatwoot" className="text-xs font-bold text-soft-ink">
+                  Solo Chatwoot (Agent Bot)
                 </label>
               </div>
               <div className="flex items-center gap-2">
@@ -388,8 +369,42 @@ export function BotsPage() {
                   Baileys Multi-Device (QR)
                 </label>
               </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="driver-cloud"
+                  type="radio"
+                  name="driver"
+                  value="CLOUD_API"
+                  checked={newBotDriver === 'CLOUD_API'}
+                  onChange={() => setNewBotDriver('CLOUD_API')}
+                />
+                <label htmlFor="driver-cloud" className="text-xs font-bold text-soft-ink">
+                  WhatsApp Cloud API Oficial
+                </label>
+              </div>
             </div>
           </fieldset>
+
+          {newBotDriver !== 'CHATWOOT' ? (
+            <div>
+              <label
+                htmlFor="new-bot-phone"
+                className="mb-1 block text-xs font-bold text-soft-ink"
+              >
+                Número de WhatsApp
+              </label>
+              <input
+                id="new-bot-phone"
+                name="phoneNumber"
+                type="tel"
+                autoComplete="tel"
+                placeholder="Ej: +18097504293"
+                value={newBotPhone}
+                onChange={(e) => setNewBotPhone(e.target.value)}
+                className="w-full rounded-xl border border-soft-line bg-soft-bg px-3.5 py-2 text-xs text-soft-ink"
+              />
+            </div>
+          ) : null}
 
           <div>
             <label

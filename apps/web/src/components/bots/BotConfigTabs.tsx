@@ -74,7 +74,10 @@ export function BotConfigTabs({
   onFeedback
 }: BotConfigTabsProps) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<BotConfigTab>('whatsapp');
+  const isChatwootOnlyBot = selectedBot.driver === 'CHATWOOT';
+  const [activeTab, setActiveTab] = useState<BotConfigTab>(
+    isChatwootOnlyBot ? 'chatwoot' : 'whatsapp'
+  );
 
   const [cwBaseUrl, setCwBaseUrl] = useState('');
   const [cwAccountId, setCwAccountId] = useState('1');
@@ -95,6 +98,7 @@ export function BotConfigTabs({
   const defaultWebhookSecret = `whsec_${selectedBot.id.replace(/[^a-zA-Z0-9]/g, '')}_2026`;
 
   useEffect(() => {
+    setActiveTab(selectedBot.driver === 'CHATWOOT' ? 'chatwoot' : 'whatsapp');
     if (selectedBot.chatwootConfig) {
       setCwBaseUrl(selectedBot.chatwootConfig.baseUrl);
       setCwAccountId(String(selectedBot.chatwootConfig.accountId));
@@ -106,13 +110,18 @@ export function BotConfigTabs({
         tokenMatch ? decodeURIComponent(tokenMatch) : defaultWebhookSecret
       );
     } else {
+      setCwBaseUrl('');
+      setCwAccountId('1');
+      setCwInboxId('1');
+      setCwApiToken('');
+      setCwReturnCommand('#bot');
       setCwWebhookToken(defaultWebhookSecret);
     }
     if (selectedBot.cloudApiConfig) {
       setCloudPhoneId(selectedBot.cloudApiConfig.phoneNumberId);
       setCloudWabaId(selectedBot.cloudApiConfig.wabaId);
     }
-  }, [selectedBot.id, defaultWebhookSecret]);
+  }, [selectedBot.id, selectedBot.driver, defaultWebhookSecret]);
 
   const effectiveWebhookToken = cwWebhookToken.trim() || defaultWebhookSecret;
   const currentOrigin =
@@ -250,21 +259,27 @@ export function BotConfigTabs({
           aria-label="Pestañas de configuración del bot"
           className="flex flex-nowrap gap-2 overflow-x-auto"
         >
-          <button
-            id="tab-whatsapp"
-            role="tab"
-            aria-selected={activeTab === 'whatsapp'}
-            type="button"
-            onClick={() => setActiveTab('whatsapp')}
-            className={`inline-flex flex-none items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-all ${
-              activeTab === 'whatsapp'
-                ? 'bg-brand-gradient text-white shadow-brand-icon'
-                : 'bg-soft-bg text-soft-ink'
-            }`}
-          >
-            <QrCode className="h-3.5 w-3.5" />
-            <span>1. Conexión WhatsApp (QR / Cloud API)</span>
-          </button>
+          {!isChatwootOnlyBot ? (
+            <button
+              id="tab-whatsapp"
+              role="tab"
+              aria-selected={activeTab === 'whatsapp'}
+              type="button"
+              onClick={() => setActiveTab('whatsapp')}
+              className={`inline-flex flex-none items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-all ${
+                activeTab === 'whatsapp'
+                  ? 'bg-brand-gradient text-white shadow-brand-icon'
+                  : 'bg-soft-bg text-soft-ink'
+              }`}
+            >
+              <QrCode className="h-3.5 w-3.5" />
+              <span>
+                {selectedBot.driver === 'BAILEYS'
+                  ? '1. Conexión WhatsApp (Baileys QR)'
+                  : '1. Conexión WhatsApp Cloud API'}
+              </span>
+            </button>
+          ) : null}
           <button
             id="tab-chatwoot"
             role="tab"
@@ -278,7 +293,11 @@ export function BotConfigTabs({
             }`}
           >
             <MessageSquare className="h-3.5 w-3.5" />
-            <span>2. Integración Chatwoot</span>
+            <span>
+              {isChatwootOnlyBot
+                ? '1. Integración Chatwoot (Agent Bot)'
+                : '2. Integración Chatwoot'}
+            </span>
           </button>
           <button
             id="tab-schedule"
@@ -293,14 +312,19 @@ export function BotConfigTabs({
             }`}
           >
             <Sparkles className="h-3.5 w-3.5" />
-            <span>3. Flujo Asignado, Horarios & FAQ</span>
+            <span>
+              {isChatwootOnlyBot
+                ? '2. Flujo Asignado, Horarios & FAQ'
+                : '3. Flujo Asignado, Horarios & FAQ'}
+            </span>
           </button>
         </div>
       </div>
 
-      {activeTab === 'whatsapp' ? (
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div className="rounded-2xl border border-soft-line bg-soft-bg p-5">
+      {!isChatwootOnlyBot && activeTab === 'whatsapp' ? (
+        <div className="mt-6 grid grid-cols-1 gap-6">
+          {selectedBot.driver === 'BAILEYS' ? (
+            <div className="rounded-2xl border border-soft-line bg-soft-bg p-5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-extrabold uppercase tracking-wider text-soft-blue">
                 Motor Baileys Multi-Device (QR en Vivo)
@@ -355,7 +379,7 @@ export function BotConfigTabs({
               </div>
             </div>
           </div>
-
+          ) : (
           <form
             onSubmit={handleSaveCloudApi}
             className="flex flex-col justify-between rounded-2xl border border-soft-line bg-soft-bg p-5"
@@ -451,6 +475,7 @@ export function BotConfigTabs({
               Guardar y Activar WhatsApp Cloud API
             </button>
           </form>
+          )}
         </div>
       ) : null}
 

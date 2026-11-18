@@ -81,8 +81,13 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         organizationId: request.user.organizationId || DEFAULT_ORG_ID,
         name: data.name,
         description:
-          data.description || 'Bot de WhatsApp integrado con Chatwoot.',
-        phoneNumber: data.phoneNumber || '+57 300 000 0000',
+          data.description ||
+          (data.driver === 'CHATWOOT'
+            ? 'Bot Agent de Chatwoot conectado vía Webhook y API.'
+            : 'Bot de WhatsApp integrado con Chatwoot.'),
+        phoneNumber:
+          data.phoneNumber ||
+          (data.driver === 'CHATWOOT' ? 'Chatwoot Agent Bot' : '+57 300 000 0000'),
         driver: data.driver,
         status: data.driver === 'BAILEYS' ? 'WAITING_QR' : 'DISCONNECTED',
         isActive: data.isActive,

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const WhatsAppDriverTypeSchema = z.enum(['BAILEYS', 'CLOUD_API']);
+export const WhatsAppDriverTypeSchema = z.enum(['CHATWOOT', 'BAILEYS', 'CLOUD_API']);
 export type WhatsAppDriverType = z.infer<typeof WhatsAppDriverTypeSchema>;
 
 export const BotConnectionStatusSchema = z.enum([

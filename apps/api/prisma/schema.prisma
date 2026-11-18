@@ -14,6 +14,7 @@ enum UserRole {
 }
 
 enum WhatsAppDriverType {
+  CHATWOOT
   BAILEYS
   CLOUD_API
 }
