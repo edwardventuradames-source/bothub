@@ -69,15 +69,26 @@ function shouldCallRemoteChatwoot(baseUrl: string, conversationId?: number): boo
   }
 }
 
+interface ChatwootApiCallResult {
+  sent: boolean;
+  status?: number;
+  errorDetail?: string;
+}
+
 async function sendMessageToChatwootApi(params: {
   config: ChatwootConfigDto;
   apiAccessToken: string;
   conversationId: number;
   content: string;
   isPrivate?: boolean;
-}): Promise<void> {
+}): Promise<ChatwootApiCallResult> {
   if (!shouldCallRemoteChatwoot(params.config.baseUrl, params.conversationId)) {
-    return;
+    return { sent: false, errorDetail: 'skipped_local_url' };
+  }
+
+  const trimmedContent = params.content.trim();
+  if (!trimmedContent) {
+    return { sent: false, errorDetail: 'empty_content' };
   }
 
   const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/conversations/${params.conversationId}/messages`;
@@ -85,21 +96,35 @@ async function sendMessageToChatwootApi(params: {
   const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
 
   try {
-    await fetch(endpoint, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         api_access_token: params.apiAccessToken
       },
       body: JSON.stringify({
-        content: params.content,
+        content: trimmedContent,
         message_type: 'outgoing',
         private: Boolean(params.isPrivate)
       }),
       signal: controller.signal
     });
-  } catch {
-    void 0;
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      return {
+        sent: false,
+        status: response.status,
+        errorDetail: `HTTP ${response.status}: ${errorBody.slice(0, 220)}`
+      };
+    }
+
+    return { sent: true, status: response.status };
+  } catch (err) {
+    return {
+      sent: false,
+      errorDetail: err instanceof Error ? err.message : 'Network error'
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -620,12 +645,29 @@ export class ChatwootService {
       });
       conversation.lastMessagePreview = formattedText;
 
-      await sendMessageToChatwootApi({
+      const apiRes = await sendMessageToChatwootApi({
         config,
         apiAccessToken: secrets.apiAccessToken,
         conversationId: chatwootConvId,
         content: formattedText
       });
+
+      if (!apiRes.sent && apiRes.errorDetail !== 'skipped_local_url') {
+        const errLog = runtimeStore.appendLog({
+          botId: bot.id,
+          botName: bot.name,
+          level: 'ERROR',
+          event: 'chatwoot.api.error',
+          message: `Error enviando respuesta a Chatwoot (${config.baseUrl}/api/v1/accounts/${config.accountId}/conversations/${chatwootConvId}/messages): ${apiRes.errorDetail}`,
+          metadata: {
+            chatwootConversationId: chatwootConvId,
+            status: apiRes.status ?? null
+          }
+        });
+        if (io) {
+          io.emit('log:new', errLog);
+        }
+      }
     }
 
     if (simulation.handoffRequested) {
