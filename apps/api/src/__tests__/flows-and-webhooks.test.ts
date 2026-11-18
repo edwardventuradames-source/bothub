@@ -6,38 +6,47 @@ import {
   interpolateFlowVariables,
   validateQuestionAnswer
 } from '../modules/flows/flow.engine.js';
+import { provisionAdminAccountFromServer } from '../modules/auth/auth.service.js';
 import { runtimeStore } from '../lib/runtime-store.js';
 
-describe('User Registration from Scratch, Flow Engine & Webhooks', () => {
-  it('registers a new admin user from scratch and logs in with JWT', async () => {
+describe('Server-Side Admin Provisioning, Flow Engine & Webhooks', () => {
+  it('provisions an admin from the server CLI, logs in with JWT, and blocks public registration (403)', async () => {
     const app = await buildApp();
 
-    const registerRes = await app.inject({
+    await provisionAdminAccountFromServer({
+      email: 'soluciones@bytemv.com',
+      password: 'StrongPassword2026!',
+      name: 'Edward Garibaldi Ventura Adames',
+      organizationName: 'Bytemv'
+    });
+
+    const loginRes = await app.inject({
       method: 'POST',
-      url: '/api/auth/register',
+      url: '/api/auth/login',
       payload: {
-        name: 'Edward Ventura',
-        organizationName: 'Ventura Enterprise',
-        email: 'edward@ventura.local',
+        email: 'soluciones@bytemv.com',
         password: 'StrongPassword2026!'
       }
     });
 
-    expect(registerRes.statusCode).toBe(201);
-    const registerBody = registerRes.json();
-    expect(registerBody.accessToken).toBeDefined();
-    expect(registerBody.user.email).toBe('edward@ventura.local');
-    expect(registerBody.user.role).toBe('ADMIN');
+    expect(loginRes.statusCode).toBe(200);
+    const loginBody = loginRes.json();
+    expect(loginBody.accessToken).toBeDefined();
+    expect(loginBody.user.email).toBe('soluciones@bytemv.com');
+    expect(loginBody.user.role).toBe('ADMIN');
 
-    const meRes = await app.inject({
-      method: 'GET',
-      url: '/api/auth/me',
-      headers: {
-        authorization: `Bearer ${registerBody.accessToken}`
+    const lockedRegisterRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: {
+        name: 'Intruso',
+        organizationName: 'Spam Org',
+        email: 'spam@intruso.com',
+        password: 'SpamPassword123!'
       }
     });
-    expect(meRes.statusCode).toBe(200);
-    expect(meRes.json().user.organizationName).toBe('Ventura Enterprise');
+    expect(lockedRegisterRes.statusCode).toBe(403);
+    expect(lockedRegisterRes.json().error).toBe('REGISTRATION_LOCKED');
 
     await app.close();
   });

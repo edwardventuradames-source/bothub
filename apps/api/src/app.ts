@@ -13,8 +13,11 @@ export async function buildApp(): Promise<FastifyInstance> {
     logger: false
   });
 
+  const corsOrigins = env.CORS_ORIGIN.split(',').map((item) => item.trim());
+  const allowAnyOrigin = corsOrigins.includes('*');
+
   await app.register(fastifyCors, {
-    origin: env.CORS_ORIGIN.split(','),
+    origin: allowAnyOrigin ? true : corsOrigins,
     credentials: true
   });
 

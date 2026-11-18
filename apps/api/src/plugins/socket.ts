@@ -2,7 +2,6 @@ import { FastifyInstance } from 'fastify';
 import { Server as SocketIOServer } from 'socket.io';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
-import { whatsappProvider } from '../modules/whatsapp/whatsapp.provider.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -11,14 +10,15 @@ declare module 'fastify' {
 }
 
 export function attachSocketServer(app: FastifyInstance): SocketIOServer {
+  const corsOrigins = env.CORS_ORIGIN.split(',').map((item) => item.trim());
+  const allowAnyOrigin = corsOrigins.includes('*');
+
   const io = new SocketIOServer(app.server, {
     cors: {
-      origin: env.CORS_ORIGIN.split(','),
+      origin: allowAnyOrigin ? true : corsOrigins,
       credentials: true
     }
   });
-
-  whatsappProvider.bindSocketServer(io);
 
   io.on('connection', (socket) => {
     const organizationId = socket.handshake.auth?.organizationId;

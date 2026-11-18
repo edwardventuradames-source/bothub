@@ -13,7 +13,8 @@
     "test": "npm run test --workspace=@bothub/api",
     "db:generate": "npm run db:generate --workspace=@bothub/api",
     "db:migrate": "npm run db:migrate --workspace=@bothub/api",
-    "db:seed": "npm run db:seed --workspace=@bothub/api"
+    "db:seed": "npm run db:seed --workspace=@bothub/api",
+    "create-admin": "npm run create-admin --workspace=@bothub/api --"
   },
   "engines": {
     "node": ">=20.0.0"

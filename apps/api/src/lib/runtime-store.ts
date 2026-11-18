@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   ApiKeyDto,
   BotDto,
@@ -17,6 +19,9 @@ import {
 } from './crypto.js';
 
 export const DEFAULT_ORG_ID = '00000000-0000-4000-8000-000000000100';
+
+const SESSIONS_DIR = path.resolve(process.cwd(), 'sessions');
+const USERS_STORAGE_FILE = path.join(SESSIONS_DIR, 'users.json');
 
 export interface StoredChatwootSecrets {
   baseUrl: string;
@@ -60,6 +65,63 @@ class RuntimeStore {
   public logs: BotLogDto[] = [];
   public apiKeys: ApiKeyDto[] = [];
   public outboundWebhooks: OutboundWebhookConfigDto[] = [];
+
+  constructor() {
+    this.reloadUsersFromDisk();
+  }
+
+  public reloadUsersFromDisk(): void {
+    try {
+      if (!fs.existsSync(USERS_STORAGE_FILE)) {
+        return;
+      }
+      const raw = fs.readFileSync(USERS_STORAGE_FILE, 'utf8');
+      const parsed = JSON.parse(raw) as StoredUserRecord[];
+      if (Array.isArray(parsed)) {
+        for (const diskUser of parsed) {
+          const existingIdx = this.users.findIndex(
+            (u) => u.email.toLowerCase() === diskUser.email.toLowerCase()
+          );
+          if (existingIdx >= 0) {
+            this.users[existingIdx] = diskUser;
+          } else {
+            this.users.push(diskUser);
+          }
+        }
+      }
+    } catch {
+      void 0;
+    }
+  }
+
+  public persistUsersToDisk(): void {
+    try {
+      if (!fs.existsSync(SESSIONS_DIR)) {
+        fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+      }
+      fs.writeFileSync(
+        USERS_STORAGE_FILE,
+        JSON.stringify(this.users, null, 2),
+        'utf8'
+      );
+    } catch {
+      void 0;
+    }
+  }
+
+  public upsertStoredUser(user: StoredUserRecord): StoredUserRecord {
+    this.reloadUsersFromDisk();
+    const existingIndex = this.users.findIndex(
+      (u) => u.email.toLowerCase() === user.email.toLowerCase()
+    );
+    if (existingIndex >= 0) {
+      this.users[existingIndex] = user;
+    } else {
+      this.users.push(user);
+    }
+    this.persistUsersToDisk();
+    return user;
+  }
 
   public saveChatwootConfigForBot(
     botId: string,

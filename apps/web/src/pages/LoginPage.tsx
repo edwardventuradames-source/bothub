@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Lock, Mail, UserPlus } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, ShieldCheck } from 'lucide-react';
 import { authApi, ApiRequestError } from '../lib/api.js';
 import { useAuthStore } from '../store/auth.store.js';
 import { useThemeStore } from '../store/theme.store.js';
@@ -31,7 +31,7 @@ export function LoginPage() {
         setErrorMessage(error.message);
       } else {
         setErrorMessage(
-          'No se pudo conectar con el servidor API. Verifica que el backend esté activo.'
+          'No se pudo conectar con el servidor API. Verifica que el contenedor bothub-api esté activo.'
         );
       }
     } finally {
@@ -66,13 +66,13 @@ export function LoginPage() {
           className="flex flex-col justify-center p-7 sm:p-10"
         >
           <span className="text-xs font-bold uppercase tracking-wider text-soft-blue">
-            Acceso a Plataforma
+            Acceso Privado
           </span>
           <h1 className="mt-1 text-2xl font-extrabold text-soft-ink">
             Inicia sesión en BotHub
           </h1>
           <p className="mt-1.5 text-sm text-soft-muted">
-            Ingresa tu correo y contraseña para administrar tus bots de WhatsApp y Chatwoot.
+            Ingresa tu correo y contraseña autorizados para administrar tus bots de WhatsApp y Chatwoot.
           </p>
 
           {errorMessage ? (
@@ -171,14 +171,11 @@ export function LoginPage() {
             </motion.button>
           </form>
 
-          <div className="mt-5 border-t border-soft-line pt-5">
-            <Link
-              to="/register"
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-soft-line bg-soft-bg py-2.5 text-xs font-bold text-soft-ink transition-all hover:-translate-y-0.5 hover:border-soft-blue"
-            >
-              <UserPlus className="h-4 w-4 text-soft-blue" />
-              <span>¿No tienes cuenta? Crear usuario administrador desde cero</span>
-            </Link>
+          <div className="mt-5 flex items-center gap-2 border-t border-soft-line pt-4 text-xs text-soft-muted">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-soft-blue" />
+            <span>
+              El registro público está deshabilitado por seguridad. Los usuarios solo pueden ser creados por el administrador del servidor.
+            </span>
           </div>
         </motion.div>
 
