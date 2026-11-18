@@ -1,0 +1,153 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+  --bg: #f8f9fa;
+  --card: #ffffff;
+  --ink: #344767;
+  --mut: #67748e;
+  --line: #e9ecef;
+  --g: linear-gradient(310deg, #2152ff, #21d4fd);
+  --g-shadow: rgba(33, 82, 255, 0.3);
+  --dk: linear-gradient(310deg, #141727, #3a416f);
+  --ok: #82d616;
+  --bad: #ea0606;
+  --warn: #fb8c00;
+  --sh: 0 10px 24px rgba(52, 71, 103, 0.07);
+  --color-scrollbar-track: light-dark(#eef2f6, #1a2035);
+  --color-scrollbar-thumb: light-dark(#94a3b8, #475569);
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+  accent-color: #2152ff;
+
+  &:has(> head > meta[name="color-scheme"][content="dark"]) {
+    color-scheme: dark;
+  }
+
+  &:has(> head > meta[name="color-scheme"][content="light"]) {
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="dark"],
+:root:has(> head > meta[name="color-scheme"][content="dark"]) {
+  --bg: #111827;
+  --card: #1a2035;
+  --ink: #f1f5f9;
+  --mut: #9aa7bd;
+  --line: #2a3350;
+  --dk: linear-gradient(310deg, #141727, #3a416f);
+  --sh: 0 20px 27px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-accent="blue"] {
+  --g: linear-gradient(310deg, #2152ff, #21d4fd);
+  --g-shadow: rgba(33, 82, 255, 0.3);
+}
+
+:root[data-accent="purple"] {
+  --g: linear-gradient(310deg, #7928ca, #ff0080);
+  --g-shadow: rgba(203, 12, 159, 0.3);
+}
+
+:root[data-accent="emerald"] {
+  --g: linear-gradient(310deg, #17ad37, #82d616);
+  --g-shadow: rgba(23, 173, 55, 0.3);
+}
+
+:root[data-accent="orange"] {
+  --g: linear-gradient(310deg, #f53939, #fbcf33);
+  --g-shadow: rgba(251, 140, 0, 0.3);
+}
+
+:root[data-accent="slate"] {
+  --g: linear-gradient(310deg, #141727, #3a416f);
+  --g-shadow: rgba(20, 23, 39, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: "Open Sans", Inter, system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.bg-brand-gradient {
+  background-image: var(--g);
+}
+
+.bg-dark-gradient {
+  background-image: var(--dk);
+}
+
+.shadow-brand-icon {
+  box-shadow: 0 4px 7px var(--g-shadow);
+}
+
+.soft-card {
+  background-color: var(--card);
+  border-radius: 16px;
+  box-shadow: var(--sh);
+}
+
+@keyframes pulseOnline {
+  0% {
+    box-shadow: 0 0 0 0 rgba(130, 214, 22, 0.65);
+  }
+  100% {
+    box-shadow: 0 0 0 9px rgba(130, 214, 22, 0);
+  }
+}
+
+@keyframes floatBot3D {
+  0%,
+  100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-12px) rotate(3deg);
+  }
+}
+
+@keyframes drawSvgLine {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.dot-online {
+  animation: pulseOnline 1.6s infinite;
+}
+
+.float-bot-3d {
+  animation: floatBot3D 3s ease-in-out infinite;
+  filter: drop-shadow(0 18px 16px rgba(0, 0, 0, 0.25));
+}
+
+.svg-line-animated {
+  stroke-dasharray: 1400;
+  stroke-dashoffset: 1400;
+  animation: drawSvgLine 2.2s 0.25s forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .svg-line-animated {
+    stroke-dashoffset: 0 !important;
+  }
+}

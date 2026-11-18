@@ -1,0 +1,21 @@
+{
+  "name": "bothub",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=@bothub/shared && npm run build --workspace=@bothub/api && npm run build --workspace=@bothub/web",
+    "dev:api": "npm run dev --workspace=@bothub/api",
+    "dev:web": "npm run dev --workspace=@bothub/web",
+    "test": "npm run test --workspace=@bothub/api",
+    "db:generate": "npm run db:generate --workspace=@bothub/api",
+    "db:migrate": "npm run db:migrate --workspace=@bothub/api",
+    "db:seed": "npm run db:seed --workspace=@bothub/api"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

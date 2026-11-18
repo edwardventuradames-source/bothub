@@ -1,0 +1,323 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum WhatsAppDriverType {
+  BAILEYS
+  CLOUD_API
+}
+
+enum BotConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  WAITING_QR
+  RECONNECTING
+  PAUSED
+  ERROR
+}
+
+enum TriggerMatchMode {
+  EXACT
+  CONTAINS
+  REGEX
+  FIRST_MESSAGE
+  MAIN_MENU
+  OUT_OF_HOURS
+}
+
+enum ConversationStatus {
+  BOT_ACTIVE
+  HANDOFF_OPEN
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND_BOT
+  OUTBOUND_AGENT
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+  DEBUG
+}
+
+model Organization {
+  id            String          @id @default(uuid())
+  name          String
+  slug          String          @unique
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  users         User[]
+  bots          Bot[]
+  contacts      Contact[]
+  conversations Conversation[]
+  logs          BotLog[]
+  apiKeys       ApiKey[]
+  webhooks      WebhookConfig[]
+}
+
+model User {
+  id                  String               @id @default(uuid())
+  organizationId      String
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email               String               @unique
+  passwordHash        String
+  name                String
+  role                UserRole             @default(ADMIN)
+  avatarUrl           String?
+  isActive            Boolean              @default(true)
+  lastLoginAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  flowVersions        FlowVersion[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model Bot {
+  id                       String              @id @default(uuid())
+  organizationId           String
+  organization             Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                     String
+  description              String?
+  phoneNumber              String?
+  driver                   WhatsAppDriverType  @default(BAILEYS)
+  status                   BotConnectionStatus @default(DISCONNECTED)
+  isActive                 Boolean             @default(true)
+  inactivityTimeoutMinutes Int                 @default(15)
+  inactivityCloseMessage   String?
+  typingDelayMs            Int                 @default(1200)
+  rateLimitPerMinute       Int                 @default(30)
+  cloudApiEncryptedConfig  String?
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+  whatsappSessions         WhatsAppSession[]
+  chatwootConfig           ChatwootConfig?
+  flows                    Flow[]
+  businessHours            BusinessHours?
+  quickReplies             QuickReply[]
+  contacts                 Contact[]
+  conversations            Conversation[]
+  logs                     BotLog[]
+  webhooks                 WebhookConfig[]
+}
+
+model WhatsAppSession {
+  id            String   @id @default(uuid())
+  botId         String
+  bot           Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  sessionKey    String
+  encryptedData String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([botId, sessionKey])
+}
+
+model ChatwootConfig {
+  id                      String   @id @default(uuid())
+  botId                   String   @unique
+  bot                     Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  baseUrl                 String
+  accountId               Int
+  inboxId                 Int
+  encryptedApiAccessToken String
+  encryptedWebhookToken   String
+  handoffReturnCommand    String   @default("#bot")
+  isConnected             Boolean  @default(false)
+  lastVerifiedAt          DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+model Flow {
+  id               String           @id @default(uuid())
+  botId            String
+  bot              Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  triggerMode      TriggerMatchMode @default(MAIN_MENU)
+  triggerKeywords  String[]
+  isMainMenu       Boolean          @default(false)
+  isActive         Boolean          @default(true)
+  draftNodes       Json
+  draftEdges       Json
+  publishedNodes   Json?
+  publishedEdges   Json?
+  publishedVersion Int              @default(0)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  versions         FlowVersion[]
+}
+
+model FlowVersion {
+  id            String   @id @default(uuid())
+  flowId        String
+  flow          Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  versionNumber Int
+  nodes         Json
+  edges         Json
+  createdById   String?
+  createdBy     User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
+
+  @@unique([flowId, versionNumber])
+}
+
+model BusinessHours {
+  id                String   @id @default(uuid())
+  botId             String   @unique
+  bot               Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  timezone          String   @default("America/Caracas")
+  scheduleJson      Json
+  outOfHoursMessage String
+  isEnabled         Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model QuickReply {
+  id           String           @id @default(uuid())
+  botId        String
+  bot          Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  title        String
+  keywords     String[]
+  matchMode    TriggerMatchMode @default(CONTAINS)
+  responseText String
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+}
+
+model Contact {
+  id                   String         @id @default(uuid())
+  organizationId       String
+  organization         Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  botId                String
+  bot                  Bot            @relation(fields: [botId], references: [id], onDelete: Cascade)
+  phoneNumber          String
+  name                 String?
+  chatwootContactId    Int?
+  variablesJson        Json           @default("{}")
+  tagsJson             Json           @default("[]")
+  customAttributesJson Json           @default("{}")
+  lastInteractionAt    DateTime       @default(now())
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  conversations        Conversation[]
+
+  @@unique([botId, phoneNumber])
+}
+
+model Conversation {
+  id                     String             @id @default(uuid())
+  organizationId         String
+  organization           Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  botId                  String
+  bot                    Bot                @relation(fields: [botId], references: [id], onDelete: Cascade)
+  contactId              String
+  contact                Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  chatwootConversationId Int?
+  status                 ConversationStatus @default(BOT_ACTIVE)
+  assignedTeamId         Int?
+  assignedAgentId        Int?
+  activeFlowId           String?
+  currentNodeId          String?
+  sessionStateJson       Json               @default("{}")
+  lastMessageAt          DateTime           @default(now())
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  messages               Message[]
+}
+
+model Message {
+  id                String           @id @default(uuid())
+  conversationId    String
+  conversation      Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  externalMessageId String?          @unique
+  chatwootMessageId Int?
+  direction         MessageDirection
+  contentType       String           @default("text")
+  contentText       String
+  mediaUrl          String?
+  metadataJson      Json             @default("{}")
+  executedNodeId    String?
+  createdAt         DateTime         @default(now())
+}
+
+model BotLog {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  botId          String?
+  bot            Bot?         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  level          LogLevel     @default(INFO)
+  event          String
+  message        String
+  metadataJson   Json         @default("{}")
+  createdAt      DateTime     @default(now())
+}
+
+model ApiKey {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  keyPrefix      String
+  keyHash        String       @unique
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+}
+
+model WebhookConfig {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  botId           String?
+  bot             Bot?         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  name            String
+  targetUrl       String
+  encryptedSecret String
+  eventsJson      Json         @default("[]")
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
