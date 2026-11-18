@@ -1,1 +1,1 @@
-export const BOTS_MODULE_NAME = 'bots';
+export * from './bots.routes.js';

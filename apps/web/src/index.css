@@ -1,3 +1,5 @@
+@import "@xyflow/react/dist/style.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -79,6 +81,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background-color: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+}
+
 .bg-brand-gradient {
   background-image: var(--g);
 }
@@ -95,6 +108,28 @@ body {
   background-color: var(--card);
   border-radius: 16px;
   box-shadow: var(--sh);
+}
+
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background-color: rgba(20, 23, 39, 0.45);
+  backdrop-filter: blur(4px);
+}
+
+[role="tab"] {
+  position: relative;
+}
+
+[role="tab"][aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 8px 0;
+  border-block-end: 3px solid currentColor;
 }
 
 @keyframes pulseOnline {

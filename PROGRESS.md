@@ -1,13 +1,12 @@
 # PROGRESS.md — Registro de Avance de BotHub
 
 ## Estado General
-- **Fase Actual**: Fase 1 — Estructura, Docker, BD, Autenticación y Layout Soft UI Dashboard
-- **Estado**: Fase 1 Completada (Pendiente de confirmación del usuario para iniciar Fase 2)
+- **Plataforma BotHub (Fases 1 a 6)**: Completada, compilada, probada con Vitest y publicada en GitHub (`https://github.com/edwardventuradames-source/bothub`)
 
-## Subtareas de Fase 1
-- [x] `PLAN.md` creado con arquitectura completa de las 6 fases
-- [x] `[1.1]` Scaffolding Monorepo, Docker (`docker-compose.yml`, `apps/api/Dockerfile`, `apps/web/Dockerfile`, `apps/web/nginx.conf`) y `.env.example`
-- [x] `[1.2]` Paquete compartido `@bothub/shared` (Esquemas Zod y tipos TypeScript para Auth, Bots y Flujos)
-- [x] `[1.3]` Modelo Prisma multi-tenant (`apps/api/prisma/schema.prisma`), cifrado `AES-256-GCM` (`apps/api/src/lib/crypto.ts`) y script de `seed` (`apps/api/prisma/seed.ts`)
-- [x] `[1.4]` Backend Fastify: Autenticación JWT + Refresh Token + Recuperación + Socket.IO + Swagger OpenAPI (`/docs`) + Tests Vitest (`crypto.test.ts` y `app.test.ts`)
-- [x] `[1.5]` Frontend React 18 + Vite + TailwindCSS + Framer Motion: Login animado, Recuperación de contraseña y Layout Soft UI Dashboard con vista previa interactiva, contadores animados, gráficas de barras/líneas, configurador flotante de temas y soporte `prefers-reduced-motion`
+## Fases Completadas
+- [x] **Fase 1**: Estructura Monorepo (`@bothub/shared`, `@bothub/api`, `@bothub/web`), Docker (`docker-compose.yml`, Dockerfiles), Prisma + PostgreSQL, Cifrado `AES-256-GCM`, Autenticación JWT + Refresh Tokens y Layout Soft UI Dashboard.
+- [x] **Fase 2**: CRUD de Bots (crear, editar, duplicar, pausar/reanudar, eliminar) + `WhatsAppProvider` (`BaileysDriver` con sesión cifrada `AES-256-GCM` y QR en vivo por Socket.IO).
+- [x] **Fase 3**: Integración Bidireccional con Chatwoot (credenciales cifradas, botón "Probar conexión", webhook saliente con verificación en tiempo constante, handoff automático con nota privada y comando `#bot`).
+- [x] **Fase 4**: Motor de Flujos (12 tipos de nodos, validación de cédula/correo/número/fecha, variables `{{nombre}}` / `{{cedula}}`, horarios y FAQ) + Editor Visual en React Flow + Simulador interactivo de chat.
+- [x] **Fase 5**: Dashboard con métricas en tiempo real, Visor de Conversaciones con trazabilidad de nodos, Contactos con variables capturadas, Consola de Logs en vivo y Usuarios/Roles RBAC (`ADMIN`, `OPERATOR`, `VIEWER`).
+- [x] **Fase 6**: Driver oficial `CloudApiDriver` (WhatsApp Cloud API de Meta con verificación de webhook `hub.challenge`), API Keys, Webhooks salientes, Tests Vitest (`9 passed`) y documentación de despliegue en Ubuntu AWS.
