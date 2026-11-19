@@ -203,7 +203,7 @@ export class CloudApiDriver implements WhatsAppProviderDriver {
       return { valid: true };
     }
 
-    if (env.NODE_ENV === 'production') {
+    if (env.NODE_ENV === 'production' || process.env.NODE_ENV === 'production') {
       return { valid: false, reason: 'app_secret_required_in_production' };
     }
 

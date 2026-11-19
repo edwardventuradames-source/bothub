@@ -175,6 +175,9 @@ class RuntimeStore {
   }
 
   public reloadUsersFromDisk(): void {
+    if (isTestRuntime()) {
+      return;
+    }
     try {
       if (!fs.existsSync(USERS_STORAGE_FILE)) {
         return;
@@ -199,6 +202,9 @@ class RuntimeStore {
   }
 
   public persistUsersToDisk(): void {
+    if (isTestRuntime()) {
+      return;
+    }
     try {
       if (!fs.existsSync(SESSIONS_DIR)) {
         fs.mkdirSync(SESSIONS_DIR, { recursive: true });

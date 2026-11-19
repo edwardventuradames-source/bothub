@@ -76,19 +76,25 @@ export async function buildApp(): Promise<FastifyInstance> {
     max: 300,
     timeWindow: '1 minute',
     errorResponseBuilder: (_request, context) => ({
+      statusCode: 429,
       error: 'RATE_LIMIT_EXCEEDED',
       message: `Demasiadas solicitudes. Intenta nuevamente en ${Math.ceil(context.ttl / 1000)} segundos.`
     })
   });
 
   app.setErrorHandler((error, request, reply) => {
-    const errObj = error as { statusCode?: unknown; code?: unknown; message?: unknown };
+    const errObj = error as {
+      statusCode?: unknown;
+      code?: unknown;
+      error?: unknown;
+      message?: unknown;
+    };
     const statusCode =
       typeof errObj.statusCode === 'number' ? errObj.statusCode : 500;
     const message =
       typeof errObj.message === 'string' ? errObj.message : 'Solicitud inválida.';
     const code = typeof errObj.code === 'string' ? errObj.code : 'BAD_REQUEST';
-    if (statusCode === 429) {
+    if (statusCode === 429 || errObj.error === 'RATE_LIMIT_EXCEEDED') {
       reply.status(429).send({
         error: 'RATE_LIMIT_EXCEEDED',
         message
