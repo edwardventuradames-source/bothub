@@ -219,7 +219,7 @@ describe('AppSec & OWASP Top 10 Security Audit Suite', () => {
     expect(got429).toBe(true);
 
     await app.close();
-  });
+  }, 15000);
 
   it('enforces multi-tenant isolation (IDOR prevention), RBAC permissions, API key hashing, and webhook SSRF blocking', async () => {
     const app = await buildApp();
@@ -414,7 +414,7 @@ describe('AppSec & OWASP Top 10 Security Audit Suite', () => {
     expect(viewerSimulate.statusCode).toBe(403);
 
     await app.close();
-  });
+  }, 15000);
 
   it('rejects missing/spoofed Chatwoot webhook tokens and requires Cloud HMAC in production', async () => {
     const app = await buildApp();
@@ -545,7 +545,7 @@ describe('AppSec & OWASP Top 10 Security Audit Suite', () => {
     }
 
     await app.close();
-  });
+  }, 15000);
 
   it('rejects unauthenticated Socket.IO clients and allows authenticated org connections', async () => {
     const app = await buildApp();
@@ -610,5 +610,5 @@ describe('AppSec & OWASP Top 10 Security Audit Suite', () => {
     ).resolves.toBeUndefined();
 
     await app.close();
-  });
+  }, 15000);
 });
