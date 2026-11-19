@@ -1,16 +1,28 @@
-import { Node } from '@xyflow/react';
+import { Edge, Node } from '@xyflow/react';
 import { Sparkles, Trash2 } from 'lucide-react';
 import { FlowNodeType, QuestionValidationType } from '@bothub/shared';
+import { InteractiveOptionsInspector } from './InteractiveOptionsInspector.js';
 
 interface FlowNodeInspectorProps {
   selectedNode: Node | null;
+  allNodes: Node[];
+  edges: Edge[];
   onUpdateData: (key: string, value: unknown) => void;
+  onSetBranchEdge: (
+    sourceNodeId: string,
+    sourceHandle: string,
+    targetNodeId: string,
+    label?: string
+  ) => void;
   onDeleteNode: () => void;
 }
 
 export function FlowNodeInspector({
   selectedNode,
+  allNodes,
+  edges,
   onUpdateData,
+  onSetBranchEdge,
   onDeleteNode
 }: FlowNodeInspectorProps) {
   const selectedNodeType = (selectedNode?.data?.nodeType as FlowNodeType) ?? null;
@@ -207,21 +219,31 @@ export function FlowNodeInspector({
           ) : null}
 
           {selectedNodeType === 'BUTTONS' || selectedNodeType === 'LIST' ? (
-            <div>
-              <label
-                htmlFor="interactive-body"
-                className="mb-1 block text-xs font-bold text-soft-ink"
-              >
-                Texto del Menú Interactivo
-              </label>
-              <textarea
-                id="interactive-body"
-                rows={3}
-                value={String(selectedNode.data.bodyText ?? '')}
-                onChange={(e) => onUpdateData('bodyText', e.target.value)}
-                className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+            <>
+              <div>
+                <label
+                  htmlFor="interactive-body"
+                  className="mb-1 block text-xs font-bold text-soft-ink"
+                >
+                  Texto del Menú Interactivo
+                </label>
+                <textarea
+                  id="interactive-body"
+                  rows={3}
+                  value={String(selectedNode.data.bodyText ?? '')}
+                  onChange={(e) => onUpdateData('bodyText', e.target.value)}
+                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+                />
+              </div>
+              <InteractiveOptionsInspector
+                selectedNode={selectedNode}
+                nodeType={selectedNodeType}
+                allNodes={allNodes}
+                edges={edges}
+                onUpdateData={onUpdateData}
+                onSetBranchEdge={onSetBranchEdge}
               />
-            </div>
+            </>
           ) : null}
 
           {selectedNodeType === 'CONDITION' ? (
@@ -276,11 +298,38 @@ export function FlowNodeInspector({
                   className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
                 />
               </div>
+              <InteractiveOptionsInspector
+                selectedNode={selectedNode}
+                nodeType="CONDITION"
+                allNodes={allNodes}
+                edges={edges}
+                onUpdateData={onUpdateData}
+                onSetBranchEdge={onSetBranchEdge}
+              />
             </>
           ) : null}
 
           {selectedNodeType === 'HTTP_REQUEST' ? (
             <>
+              <div>
+                <label
+                  htmlFor="http-method"
+                  className="mb-1 block text-xs font-bold text-soft-ink"
+                >
+                  Método HTTP
+                </label>
+                <select
+                  id="http-method"
+                  value={String(selectedNode.data.method ?? 'GET')}
+                  onChange={(e) => onUpdateData('method', e.target.value)}
+                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+                >
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="PATCH">PATCH</option>
+                </select>
+              </div>
               <div>
                 <label
                   htmlFor="http-url"
@@ -349,11 +398,78 @@ export function FlowNodeInspector({
                   className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
                 >
                   <option value="gpt-4o-mini">OpenAI GPT-4o Mini</option>
-                  <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                  <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
                   <option value="gemini-2.5-flash">Google Gemini 2.5 Flash</option>
                 </select>
               </div>
+              <div>
+                <label
+                  htmlFor="ai-fallback"
+                  className="mb-1 block text-xs font-bold text-soft-ink"
+                >
+                  Mensaje Alterno si Falla la API IA (Opcional)
+                </label>
+                <input
+                  id="ai-fallback"
+                  type="text"
+                  value={String(selectedNode.data.fallbackMessage ?? '')}
+                  onChange={(e) => onUpdateData('fallbackMessage', e.target.value)}
+                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+                />
+              </div>
             </>
+          ) : null}
+
+          {selectedNodeType === 'ASSIGN_TAG' ? (
+            <div>
+              <label
+                htmlFor="assign-tags-input"
+                className="mb-1 block text-xs font-bold text-soft-ink"
+              >
+                Etiquetas (separadas por coma)
+              </label>
+              <input
+                id="assign-tags-input"
+                type="text"
+                value={
+                  Array.isArray(selectedNode.data.tags)
+                    ? (selectedNode.data.tags as string[]).join(', ')
+                    : ''
+                }
+                onChange={(e) =>
+                  onUpdateData(
+                    'tags',
+                    e.target.value
+                      .split(',')
+                      .map((t) => t.trim())
+                      .filter(Boolean)
+                  )
+                }
+                className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+              />
+            </div>
+          ) : null}
+
+          {selectedNodeType === 'DELAY' ? (
+            <div>
+              <label
+                htmlFor="delay-seconds-input"
+                className="mb-1 block text-xs font-bold text-soft-ink"
+              >
+                Segundos de Espera / Escribiendo (0 - 15s)
+              </label>
+              <input
+                id="delay-seconds-input"
+                type="number"
+                min={0}
+                max={15}
+                value={Number(selectedNode.data.delaySeconds ?? 2)}
+                onChange={(e) =>
+                  onUpdateData('delaySeconds', Number(e.target.value) || 0)
+                }
+                className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+              />
+            </div>
           ) : null}
 
           {selectedNodeType === 'HANDOFF' ? (
@@ -392,20 +508,38 @@ export function FlowNodeInspector({
               </div>
             </>
           ) : null}
+
+          {selectedNodeType === 'END' ? (
+            <div>
+              <label
+                htmlFor="end-farewell-input"
+                className="mb-1 block text-xs font-bold text-soft-ink"
+              >
+                Mensaje de Despedida
+              </label>
+              <textarea
+                id="end-farewell-input"
+                rows={3}
+                value={String(selectedNode.data.farewellMessage ?? '')}
+                onChange={(e) => onUpdateData('farewellMessage', e.target.value)}
+                className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+              />
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="grid h-full place-items-center text-center text-xs text-soft-muted">
           <div>
             <Sparkles className="mx-auto h-7 w-7 text-soft-blue" />
             <p className="mt-2 font-bold">
-              Haz clic en cualquier nodo del lienzo para editar sus propiedades, validaciones y textos.
+              Haz clic en cualquier nodo del lienzo para editar sus propiedades, botones, validaciones y textos.
             </p>
           </div>
         </div>
       )}
 
       <div className="mt-4 rounded-xl bg-soft-bg p-3 text-[11px] text-soft-muted">
-        💡 <strong>Tip:</strong> Conecta la salida de un nodo hacia la entrada de otro arrastrando desde el punto inferior o lateral.
+        💡 <strong>Tip:</strong> Conecta nodos arrastrando en el lienzo o asigna el destino de cada botón directamente desde el inspector.
       </div>
     </div>
   );

@@ -196,6 +196,34 @@ export function FlowsBuilderPage() {
     setStatusMessage('Nodo eliminado del flujo.');
   }
 
+  function handleSetBranchEdge(
+    sourceNodeId: string,
+    sourceHandle: string,
+    targetNodeId: string,
+    label?: string
+  ): void {
+    setEdges((prev) => {
+      const filtered = prev.filter(
+        (e) => !(e.source === sourceNodeId && e.sourceHandle === sourceHandle)
+      );
+      if (!targetNodeId) {
+        return filtered;
+      }
+      return [
+        ...filtered,
+        {
+          id: `e-${sourceNodeId}-${sourceHandle}-${targetNodeId}`,
+          source: sourceNodeId,
+          sourceHandle,
+          target: targetNodeId,
+          label: label ?? sourceHandle,
+          animated: true,
+          style: { stroke: '#2152ff', strokeWidth: 2 }
+        }
+      ];
+    });
+  }
+
   async function handleSaveOrPublish(publish: boolean): Promise<void> {
     if (!activeFlow) return;
     setIsSaving(true);
@@ -446,7 +474,10 @@ export function FlowsBuilderPage() {
 
         <FlowNodeInspector
           selectedNode={selectedNode}
+          allNodes={nodes}
+          edges={edges}
           onUpdateData={updateSelectedNodeData}
+          onSetBranchEdge={handleSetBranchEdge}
           onDeleteNode={handleDeleteSelectedNode}
         />
 

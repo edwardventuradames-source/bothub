@@ -149,7 +149,8 @@ function matchesInteractiveOption(
     normalizedInput === optionId.trim().toLowerCase() ||
     normalizedInput === numericIndex ||
     normalizedInput === labelLower ||
-    (labelWithoutPrefix.length > 0 && normalizedInput === labelWithoutPrefix)
+    (labelWithoutPrefix.length > 0 && normalizedInput === labelWithoutPrefix) ||
+    (normalizedInput.length >= 10 && labelLower.startsWith(normalizedInput))
   );
 }
 

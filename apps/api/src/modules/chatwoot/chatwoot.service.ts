@@ -653,7 +653,8 @@ export class ChatwootService {
         config,
         apiAccessToken: secrets.apiAccessToken,
         conversationId: chatwootConvId,
-        content: formattedText
+        content: formattedText,
+        reply
       });
 
       if (!apiRes.sent && apiRes.errorDetail !== 'skipped_local_url') {

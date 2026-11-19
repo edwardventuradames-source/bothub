@@ -10,6 +10,7 @@ import {
 import { provisionAdminAccountFromServer } from '../modules/auth/auth.service.js';
 import { runtimeStore } from '../lib/runtime-store.js';
 import { ChatwootService } from '../modules/chatwoot/chatwoot.service.js';
+import { sendMessageToChatwootApi } from '../modules/chatwoot/chatwoot.client.js';
 
 function signMetaPayload(payload: unknown, appSecret: string): string {
   const raw = JSON.stringify(payload);
@@ -744,6 +745,59 @@ describe('Server-Side Admin Provisioning, Flow Engine & Webhooks', () => {
       await expect(ChatwootService.testConnection(botId)).rejects.toThrow('401');
       const updatedBot = runtimeStore.bots.find((b) => b.id === botId);
       expect(updatedBot?.status).toBe('ERROR');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('sends Chatwoot input_select interactive buttons and falls back to plain text on 422', async () => {
+    const originalFetch = globalThis.fetch;
+    const sentBodies: Array<Record<string, unknown>> = [];
+
+    try {
+      let attempt = 0;
+      globalThis.fetch = (async (_url, init) => {
+        attempt += 1;
+        sentBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+        if (attempt === 1) {
+          return new Response(JSON.stringify({ error: 'unsupported input_select' }), {
+            status: 422,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        return new Response(JSON.stringify({ id: 99 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }) as typeof fetch;
+
+      const res = await sendMessageToChatwootApi({
+        config: {
+          baseUrl: 'https://chat.bytemv.com',
+          accountId: 1,
+          inboxId: 1,
+          hasApiAccessToken: true,
+          maskedApiAccessToken: 'cw_•••',
+          webhookTokenPreview: 'wh_•••',
+          webhookEndpointPath: '/api/webhooks/chatwoot/bot-1',
+          handoffReturnCommand: '#bot',
+          isActive: true,
+          lastSyncedAt: null
+        },
+        apiAccessToken: 'token_test_cw',
+        conversationId: 42,
+        content: 'Selecciona una opción:\n\n1. Ventas',
+        reply: {
+          id: 'r-1',
+          text: 'Selecciona una opción:',
+          buttons: [{ id: 'btn-1', label: '1. Ventas' }]
+        }
+      });
+
+      expect(res.sent).toBe(true);
+      expect(sentBodies).toHaveLength(2);
+      expect(sentBodies[0].content_type).toBe('input_select');
+      expect(sentBodies[1].content_type).toBeUndefined();
     } finally {
       globalThis.fetch = originalFetch;
     }
