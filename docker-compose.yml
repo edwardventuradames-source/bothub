@@ -59,12 +59,15 @@ services:
     volumes:
       - api_sessions:/app/apps/api/sessions
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
 
   web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_WS_URL: ${VITE_WS_URL:-}
     container_name: bothub-web
     restart: unless-stopped
     depends_on:

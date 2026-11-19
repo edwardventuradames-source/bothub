@@ -1,10 +1,11 @@
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 RUN apk add --no-cache openssl
 WORKDIR /app
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY packages/shared/package.json ./packages/shared/
 COPY apps/api/package.json ./apps/api/
-RUN npm install
+COPY apps/web/package.json ./apps/web/
+RUN npm ci --workspace=@bothub/api --workspace=@bothub/shared --include-workspace-root
 COPY tsconfig.base.json ./
 COPY packages/shared ./packages/shared
 COPY apps/api ./apps/api
@@ -12,7 +13,7 @@ RUN npm run build --workspace=@bothub/shared
 RUN npx --workspace=@bothub/api prisma generate
 RUN npm run build --workspace=@bothub/api
 
-FROM node:20-alpine
+FROM node:22-alpine
 RUN apk add --no-cache openssl
 WORKDIR /app
 ENV NODE_ENV=production
@@ -24,4 +25,4 @@ COPY --from=builder /app/apps/api/package.json ./apps/api/
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 EXPOSE 4000
-CMD ["sh", "-c", "npx prisma db push --schema=apps/api/prisma/schema.prisma --skip-generate || true; node apps/api/dist/server.js"]
+CMD ["sh", "-c", "npx prisma db push --schema=apps/api/prisma/schema.prisma --skip-generate && node apps/api/dist/server.js"]

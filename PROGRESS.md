@@ -25,3 +25,7 @@
 - [x] **Fase QA 4 — Verificación y Contingencia Revisor (`revisor.md`)**:
   - Ante la ausencia de CLI/modelo Claude en la sesión, la revisión independiente se ejecutó mediante Subagente Revisor (`2fb48813`, `Model: 'pro'`) en dos rondas: Ronda 1 (`RECHAZADO`, `ea3293e`) -> Correcciones (`7ba5e22`, `84d8a21`) -> Ronda 2 (**`APROBADO`**, `0` hallazgos pendientes, `24/24` tests Vitest, `19/19` sondas HTTP/WS en vivo, `npm run build` limpio y `0` vulnerabilidades en `npm audit`).
   - Paquete de verificación para segunda revisión opcional con Claude y decisiones de migración Prisma/PostgreSQL documentadas en [`qa/REPORTE_QA.md`](qa/REPORTE_QA.md).
+- [x] **Endurecimiento Pre-Producción (Docker, Nginx, Compose y Esquema Prisma)**:
+  - Esquema [`apps/api/prisma/schema.prisma`](apps/api/prisma/schema.prisma) alineado con `User.tokenVersion` y relación `Flow.botId` nullable + `Flow.organizationId` con extracción de [`apps/api/src/lib/persistence-flows.ts`](apps/api/src/lib/persistence-flows.ts) y [`apps/api/src/modules/auth/auth-token-store.ts`](apps/api/src/modules/auth/auth-token-store.ts).
+  - [`apps/api/Dockerfile`](apps/api/Dockerfile) y [`apps/web/Dockerfile`](apps/web/Dockerfile) actualizados a `node:22-alpine` con `package-lock.json` + `npm ci` reproducible y fallo explícito ante errores de esquema.
+  - Puerto directo API acotado a `127.0.0.1:4000:4000` en [`docker-compose.yml`](docker-compose.yml) y propagación de `X-Real-IP`/`X-Forwarded-For`/`X-Forwarded-Proto` en `/socket.io/` en [`apps/web/nginx.conf`](apps/web/nginx.conf).
