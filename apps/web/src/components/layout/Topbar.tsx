@@ -108,7 +108,7 @@ export function Topbar({
       </div>
 
       <div className="flex w-full flex-wrap items-center gap-2.5 sm:w-auto">
-        <div className="relative min-w-0 flex-1 sm:flex-initial">
+        <div className="relative w-full sm:w-auto">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-soft-muted" />
           <input
             type="search"
