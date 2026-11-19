@@ -190,6 +190,16 @@ dialog::backdrop {
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
 }
 
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 3px !important;
+  cursor: pointer;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #ef4444 !important;
+  stroke-width: 3.5px !important;
+}
+
 :root[data-theme="dark"] .react-flow__controls,
 :root:has(> head > meta[name="color-scheme"][content="dark"]) .react-flow__controls {
   border-color: #334155;

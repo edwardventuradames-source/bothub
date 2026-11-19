@@ -1,14 +1,10 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Background,
   Connection,
   Edge,
   EdgeChange,
-  MiniMap,
   Node,
   NodeChange,
-  ReactFlow,
-  Controls,
   addEdge,
   useEdgesState,
   useNodesState
@@ -34,11 +30,12 @@ import {
 import { botsApi, flowsApi } from '../lib/api.js';
 import { useAuthStore } from '../store/auth.store.js';
 import { useThemeStore } from '../store/theme.store.js';
+import { FlowCanvasPanel, FlowPaletteSection } from '../components/flows/FlowCanvasPanel.js';
 import { FlowSimulatorPanel } from '../components/flows/FlowSimulatorPanel.js';
 import { FlowNodeInspector } from '../components/flows/FlowNodeInspector.js';
 import { CreateFlowDialog, DeleteFlowDialog } from '../components/flows/FlowDialogs.js';
 import {
-  FLOW_NODE_PALETTE,
+  FLOW_DEFAULT_EDGE_OPTIONS,
   PaletteNodeOption,
   buildFlowNodeLabel,
   getFlowNodeAccentColor,
@@ -58,6 +55,7 @@ export function FlowsBuilderPage() {
   const [bots, setBots] = useState<BotDto[]>([]);
   const [selectedFlowId, setSelectedFlowId] = useState<string>('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{
     type: 'ok' | 'err';
@@ -140,6 +138,12 @@ export function FlowsBuilderPage() {
   const onEdgesChange = useCallback(
     (changes: EdgeChange<Edge>[]) => {
       rawOnEdgesChange(changes);
+      const removedIds = new Set(
+        changes.filter((c) => c.type === 'remove').map((c) => c.id)
+      );
+      if (removedIds.size > 0) {
+        setSelectedEdgeId((prev) => (prev && removedIds.has(prev) ? null : prev));
+      }
       if (changes.some((c) => c.type !== 'select')) {
         setHasUnsavedChanges(true);
       }
@@ -163,6 +167,7 @@ export function FlowsBuilderPage() {
           setNodes(mapFlowNodesToReactFlow(initialFlow.draftVersion.nodes, null));
           setEdges(mapFlowEdgesToReactFlow(initialFlow.draftVersion.edges));
           setSelectedNodeId(initialFlow.draftVersion.nodes[0]?.id ?? null);
+          setSelectedEdgeId(null);
           setHasUnsavedChanges(false);
         }
       } catch (err) {
@@ -182,6 +187,7 @@ export function FlowsBuilderPage() {
 
   function handleSelectFlow(flowId: string): void {
     setSelectedFlowId(flowId);
+    setSelectedEdgeId(null);
     const target = flows.find((f) => f.id === flowId);
     if (target) {
       setNodes(mapFlowNodesToReactFlow(target.draftVersion.nodes, null));
@@ -198,11 +204,10 @@ export function FlowsBuilderPage() {
       setEdges((eds) =>
         addEdge(
           {
+            ...FLOW_DEFAULT_EDGE_OPTIONS,
             ...connection,
             id: `edge-${Date.now()}`,
-            animated: true,
-            label: 'Continuar',
-            style: { stroke: '#2152ff', strokeWidth: 2 }
+            label: 'Continuar'
           },
           eds
         )
@@ -234,12 +239,11 @@ export function FlowsBuilderPage() {
       setEdges((prev) => [
         ...prev,
         {
+          ...FLOW_DEFAULT_EDGE_OPTIONS,
           id: `e-${selectedNodeId}-${newNodeId}`,
           source: selectedNodeId,
           target: newNodeId,
-          animated: true,
-          label: 'Siguiente',
-          style: { stroke: '#2152ff', strokeWidth: 2 }
+          label: 'Siguiente'
         }
       ]);
     }
@@ -286,8 +290,17 @@ export function FlowsBuilderPage() {
       )
     );
     setSelectedNodeId(null);
+    setSelectedEdgeId(null);
     setHasUnsavedChanges(true);
     setFeedback({ type: 'ok', text: 'Nodo eliminado del flujo.' });
+  }
+
+  function handleDeleteSelectedEdge(): void {
+    if (!selectedEdgeId || !canEditFlows) return;
+    setEdges((prev) => prev.filter((e) => e.id !== selectedEdgeId));
+    setSelectedEdgeId(null);
+    setHasUnsavedChanges(true);
+    setFeedback({ type: 'ok', text: 'Conexión eliminada del flujo.' });
   }
 
   function handleSetBranchEdge(
@@ -308,13 +321,12 @@ export function FlowsBuilderPage() {
       return [
         ...filtered,
         {
+          ...FLOW_DEFAULT_EDGE_OPTIONS,
           id: `e-${sourceNodeId}-${sourceHandle}-${targetNodeId}`,
           source: sourceNodeId,
           sourceHandle,
           target: targetNodeId,
-          label: label ?? sourceHandle,
-          animated: true,
-          style: { stroke: '#2152ff', strokeWidth: 2 }
+          label: label ?? sourceHandle
         }
       ];
     });
@@ -395,6 +407,7 @@ export function FlowsBuilderPage() {
       setNodes(mapFlowNodesToReactFlow(flow.draftVersion.nodes, null));
       setEdges(mapFlowEdgesToReactFlow(flow.draftVersion.edges));
       setSelectedNodeId(flow.draftVersion.nodes[0]?.id ?? null);
+      setSelectedEdgeId(null);
       setHasUnsavedChanges(false);
       setNewFlowName('');
       setNewFlowDesc('');
@@ -433,6 +446,7 @@ export function FlowsBuilderPage() {
         setEdges([]);
         setSelectedNodeId(null);
       }
+      setSelectedEdgeId(null);
       setHasUnsavedChanges(false);
       setFeedback({ type: 'ok', text: 'Flujo eliminado correctamente.' });
     } catch (err) {
@@ -454,6 +468,7 @@ export function FlowsBuilderPage() {
       setNodes(mapFlowNodesToReactFlow(flow.draftVersion.nodes, null));
       setEdges(mapFlowEdgesToReactFlow(flow.draftVersion.edges));
       setSelectedNodeId(flow.draftVersion.nodes[0]?.id ?? null);
+      setSelectedEdgeId(null);
       setHighlightedNodeId(null);
       setHasUnsavedChanges(false);
       setFeedback({
@@ -652,72 +667,39 @@ export function FlowsBuilderPage() {
         </div>
       ) : activeFlow ? (
         <>
-          <section className="soft-card p-4">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[11px] font-extrabold uppercase tracking-wider text-soft-blue">
-                Paleta de 12 Nodos Conversacionales (Haz clic para agregar al flujo)
-              </span>
-              <span className="text-[11px] text-soft-muted">
-                Variables soportadas: <code>{'{{nombre}}'}</code>,{' '}
-                <code>{'{{telefono}}'}</code>, <code>{'{{cedula}}'}</code>,{' '}
-                <code>{'{{estado_pedido}}'}</code>
-              </span>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {FLOW_NODE_PALETTE.map((item) => (
-                <button
-                  key={item.type}
-                  type="button"
-                  disabled={!canEditFlows}
-                  onClick={() => handleAddNodeFromPalette(item)}
-                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-soft-line bg-soft-bg px-3 py-1.5 text-xs font-bold text-soft-ink transition-transform hover:-translate-y-0.5 hover:border-soft-blue disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: item.badgeColor }}
-                  />
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-          </section>
+          <FlowPaletteSection
+            canEditFlows={canEditFlows}
+            hasSelectedEdge={Boolean(selectedEdgeId)}
+            onAddNode={handleAddNodeFromPalette}
+            onDeleteSelectedEdge={handleDeleteSelectedEdge}
+          />
 
           <section className="grid grid-cols-1 gap-5 lg:grid-cols-2 2xl:grid-cols-[1fr_340px_360px]">
-            <div className="soft-card h-[460px] min-w-0 overflow-hidden border border-soft-line p-2 lg:col-span-2 2xl:col-span-1 2xl:h-[580px]">
-              <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                colorMode={resolvedTheme}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
-                fitView
-              >
-                <Background gap={18} size={1} />
-                <Controls />
-                <MiniMap
-                  zoomable
-                  pannable
-                  style={{ width: 160, height: 120 }}
-                  nodeColor={(node) =>
-                    getFlowNodeAccentColor(
-                      (node.data?.nodeType as FlowNodeType) || 'MESSAGE'
-                    )
-                  }
-                  nodeStrokeColor={resolvedTheme === 'dark' ? '#f8fafc' : '#1e293b'}
-                  nodeStrokeWidth={2}
-                  bgColor={resolvedTheme === 'dark' ? '#0f172a' : '#f8fafc'}
-                  maskColor={
-                    resolvedTheme === 'dark'
-                      ? 'rgba(15, 23, 42, 0.65)'
-                      : 'rgba(203, 213, 225, 0.55)'
-                  }
-                  className="hidden sm:block"
-                />
-              </ReactFlow>
-            </div>
+            <FlowCanvasPanel
+              nodes={nodes}
+              edges={edges}
+              resolvedTheme={resolvedTheme}
+              canEditFlows={canEditFlows}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onEdgesDelete={() => {
+                setSelectedEdgeId(null);
+                setHasUnsavedChanges(true);
+                setFeedback({ type: 'ok', text: 'Conexión eliminada del flujo.' });
+              }}
+              onConnect={onConnect}
+              onSelectNode={(nodeId) => {
+                setSelectedNodeId(nodeId);
+                setSelectedEdgeId(null);
+              }}
+              onSelectEdge={(edgeId) => {
+                setSelectedEdgeId(edgeId);
+                setSelectedNodeId(null);
+              }}
+              onClearEdgeSelection={() => {
+                setSelectedEdgeId(null);
+              }}
+            />
 
             <FlowNodeInspector
               selectedNode={selectedNode}

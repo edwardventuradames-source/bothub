@@ -198,15 +198,22 @@ export function mapFlowNodesToReactFlow(
   });
 }
 
+export const FLOW_DELETE_KEYS: string[] = ['Backspace', 'Delete'];
+
+export const FLOW_DEFAULT_EDGE_OPTIONS = {
+  animated: true,
+  interactionWidth: 24,
+  style: { stroke: '#2152ff', strokeWidth: 2 }
+};
+
 export function mapFlowEdgesToReactFlow(flowEdges: FlowEdge[]): Edge[] {
   return flowEdges.map((fe) => ({
+    ...FLOW_DEFAULT_EDGE_OPTIONS,
     id: fe.id,
     source: fe.source,
     target: fe.target,
     sourceHandle: fe.sourceHandle ?? undefined,
     targetHandle: fe.targetHandle ?? undefined,
-    label: fe.label,
-    animated: true,
-    style: { stroke: '#2152ff', strokeWidth: 2 }
+    label: fe.label
   }));
 }
