@@ -63,6 +63,7 @@ export interface ContactDto {
 
 export interface BotLogDto {
   id: string;
+  organizationId?: string;
   botId: string | null;
   botName: string;
   level: LogLevel;
@@ -103,8 +104,21 @@ export const CreateApiKeyInputSchema = z.object({
 });
 export type CreateApiKeyInput = z.infer<typeof CreateApiKeyInputSchema>;
 
+export const HandoffActionInputSchema = z.object({
+  action: z.enum(['RETURN_TO_BOT', 'TRANSFER_TO_AGENT']),
+  reason: z.string().max(400).optional()
+});
+export type HandoffActionInput = z.infer<typeof HandoffActionInputSchema>;
+
+export const UpdateContactInputSchema = z.object({
+  tags: z.array(z.string().min(1).max(64)).max(50).optional(),
+  variables: z.record(z.string(), z.string().max(1000)).optional()
+});
+export type UpdateContactInput = z.infer<typeof UpdateContactInputSchema>;
+
 export interface ApiKeyDto {
   id: string;
+  organizationId?: string;
   name: string;
   keyPrefix: string;
   scopes: string[];
@@ -124,6 +138,7 @@ export type OutboundWebhookConfigInput = z.infer<typeof OutboundWebhookConfigInp
 
 export interface OutboundWebhookConfigDto {
   id: string;
+  organizationId?: string;
   name: string;
   targetUrl: string;
   events: string[];

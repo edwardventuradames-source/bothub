@@ -325,5 +325,9 @@ export const platformApi = {
     performRequest<{ webhook: OutboundWebhookConfigDto }>('/settings/webhooks', {
       method: 'POST',
       body: JSON.stringify(input)
+    }),
+  deleteWebhook: (id: string) =>
+    performRequest<{ success: boolean }>(`/settings/webhooks/${id}`, {
+      method: 'DELETE'
     })
 };

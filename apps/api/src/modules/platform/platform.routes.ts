@@ -4,19 +4,21 @@ import { FastifyInstance } from 'fastify';
 import {
   CreateApiKeyInputSchema,
   CreateUserInputSchema,
+  HandoffActionInputSchema,
   OutboundWebhookConfigInputSchema,
+  UpdateContactInputSchema,
   UpdateUserInputSchema
 } from '@bothub/shared';
 import {
   DEFAULT_ORG_ID,
-  maskSecretValue,
   runtimeStore
 } from '../../lib/runtime-store.js';
 import { syncConversationStateToDb } from '../../lib/persistence.js';
 import { assertSafeExternalUrl } from '../../lib/ssrf-guard.js';
+import { toggleChatwootConversationStatusApi } from '../chatwoot/chatwoot.client.js';
 import { ChatwootService, ChatwootWebhookPayload } from '../chatwoot/chatwoot.service.js';
-import { whatsappProvider } from '../whatsapp/whatsapp.provider.js';
 import { BotNotFoundError } from '../whatsapp/inbound-pipeline.js';
+import { whatsappProvider } from '../whatsapp/whatsapp.provider.js';
 
 export async function registerPlatformRoutes(app: FastifyInstance): Promise<void> {
   app.get(
@@ -36,7 +38,11 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         metrics: runtimeStore.getDashboardMetrics(orgId),
         bots: orgBots,
         recentLogs: runtimeStore.logs
-          .filter((l) => !l.botId || orgBotIds.has(l.botId))
+          .filter((l) =>
+            l.organizationId
+              ? l.organizationId === orgId
+              : Boolean(l.botId && orgBotIds.has(l.botId))
+          )
           .slice(0, 8)
       };
     }
@@ -86,6 +92,15 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
     },
     async (request, reply) => {
+      const parsed = HandoffActionInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: 'VALIDATION_ERROR',
+          message: 'Acción de handoff inválida.',
+          details: parsed.error.flatten()
+        });
+      }
+
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
       const orgBotIds = new Set(
         runtimeStore.bots.filter((b) => b.organizationId === orgId).map((b) => b.id)
@@ -100,7 +115,10 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         });
       }
 
-      if (request.body.action === 'RETURN_TO_BOT') {
+      const cwConfig = runtimeStore.getChatwootConfigDto(conversation.botId);
+      const cwTokens = runtimeStore.getDecryptedChatwootTokens(conversation.botId);
+
+      if (parsed.data.action === 'RETURN_TO_BOT') {
         conversation.status = 'BOT_ACTIVE';
         conversation.assignedAgentName = null;
         conversation.handoffReason = null;
@@ -112,10 +130,18 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           content: '🤖 Control devuelto al bot automático (#bot).',
           createdAt: new Date().toISOString()
         });
+        if (cwConfig && cwTokens && conversation.chatwootConversationId) {
+          await toggleChatwootConversationStatusApi({
+            config: cwConfig,
+            apiAccessToken: cwTokens.apiAccessToken,
+            conversationId: conversation.chatwootConversationId,
+            status: 'pending'
+          });
+        }
       } else {
         conversation.status = 'PENDING_AGENT';
         conversation.handoffReason =
-          request.body.reason ?? 'Transferencia manual desde el panel BotHub.';
+          parsed.data.reason ?? 'Transferencia manual desde el panel BotHub.';
         conversation.messages.push({
           id: `msg-${crypto.randomUUID().slice(0, 8)}`,
           senderType: 'SYSTEM',
@@ -123,6 +149,14 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           content: `👨‍💼 Conversación transferida a Chatwoot: ${conversation.handoffReason}`,
           createdAt: new Date().toISOString()
         });
+        if (cwConfig && cwTokens && conversation.chatwootConversationId) {
+          await toggleChatwootConversationStatusApi({
+            config: cwConfig,
+            apiAccessToken: cwTokens.apiAccessToken,
+            conversationId: conversation.chatwootConversationId,
+            status: 'open'
+          });
+        }
       }
 
       conversation.lastActivityAt = new Date().toISOString();
@@ -130,6 +164,9 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       const contact = runtimeStore.contacts.find((c) => c.id === conversation.contactId);
       if (contact) {
         void syncConversationStateToDb(contact, conversation);
+      }
+      if (app.io) {
+        app.io.to(`org:${orgId}`).emit('conversation:updated', conversation);
       }
       return { conversation };
     }
@@ -165,6 +202,15 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
     },
     async (request, reply) => {
+      const parsed = UpdateContactInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: 'VALIDATION_ERROR',
+          message: 'Datos de contacto inválidos.',
+          details: parsed.error.flatten()
+        });
+      }
+
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
       const contact = runtimeStore.contacts.find(
         (c) => c.id === request.params.id && c.organizationId === orgId
@@ -175,11 +221,11 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           message: 'Contacto no encontrado.'
         });
       }
-      if (request.body.tags) {
-        contact.tags = request.body.tags;
+      if (parsed.data.tags) {
+        contact.tags = parsed.data.tags;
       }
-      if (request.body.variables) {
-        contact.variables = { ...contact.variables, ...request.body.variables };
+      if (parsed.data.variables) {
+        contact.variables = { ...contact.variables, ...parsed.data.variables };
       }
       contact.lastInteractionAt = new Date().toISOString();
       runtimeStore.persistStateToDisk();
@@ -203,7 +249,11 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       );
       const { level, botId } = request.query;
       const logs = runtimeStore.logs.filter((entry) => {
-        if (entry.botId && !orgBotIds.has(entry.botId)) {
+        if (entry.organizationId) {
+          if (entry.organizationId !== orgId) {
+            return false;
+          }
+        } else if (!entry.botId || !orgBotIds.has(entry.botId)) {
           return false;
         }
         if (level && level !== 'ALL' && entry.level !== level) {
@@ -329,16 +379,22 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
   app.get(
     '/settings/overview',
     {
-      preHandler: [app.authenticate],
+      preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
       schema: {
         tags: ['System'],
-        summary: 'Obtener API Keys y configuración de Webhooks salientes'
+        summary: 'Obtener API Keys y configuración de Webhooks salientes de la organización'
       }
     },
-    async () => ({
-      apiKeys: runtimeStore.apiKeys,
-      outboundWebhooks: runtimeStore.outboundWebhooks
-    })
+    async (request) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      return {
+        apiKeys:
+          request.user.role === 'ADMIN'
+            ? runtimeStore.getPublicApiKeys(orgId)
+            : [],
+        outboundWebhooks: runtimeStore.getPublicOutboundWebhooks(orgId)
+      };
+    }
   );
 
   app.post(
@@ -358,7 +414,12 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           message: 'Nombre de API Key inválido.'
         });
       }
-      const apiKey = runtimeStore.createApiKey(parsed.data.name, parsed.data.scopes);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const apiKey = runtimeStore.createApiKey(
+        orgId,
+        parsed.data.name,
+        parsed.data.scopes
+      );
       return reply.status(201).send({ apiKey });
     }
   );
@@ -372,9 +433,19 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         summary: 'Revocar API Key'
       }
     },
-    async (request) => {
+    async (request, reply) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const existing = runtimeStore.apiKeys.find(
+        (k) => k.id === request.params.id && k.organizationId === orgId
+      );
+      if (!existing) {
+        return reply.status(404).send({
+          error: 'API_KEY_NOT_FOUND',
+          message: 'API Key no encontrada en la organización.'
+        });
+      }
       runtimeStore.apiKeys = runtimeStore.apiKeys.filter(
-        (k) => k.id !== request.params.id
+        (k) => !(k.id === request.params.id && k.organizationId === orgId)
       );
       runtimeStore.persistStateToDisk();
       return { success: true };
@@ -411,18 +482,43 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         });
       }
 
-      const webhook = {
-        id: `wh-out-${crypto.randomUUID().slice(0, 8)}`,
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const webhook = runtimeStore.createOutboundWebhook(orgId, {
         name: parsed.data.name,
         targetUrl: parsed.data.targetUrl,
         events: parsed.data.events,
-        maskedSecret: maskSecretValue(parsed.data.secretToken),
-        isActive: parsed.data.isActive,
-        createdAt: new Date().toISOString()
-      };
-      runtimeStore.outboundWebhooks.unshift(webhook);
-      runtimeStore.persistStateToDisk();
+        secretToken: parsed.data.secretToken,
+        isActive: parsed.data.isActive
+      });
       return reply.status(201).send({ webhook });
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/settings/webhooks/:id',
+    {
+      preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
+      schema: {
+        tags: ['System'],
+        summary: 'Eliminar webhook saliente de la organización'
+      }
+    },
+    async (request, reply) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const existing = runtimeStore.outboundWebhooks.find(
+        (w) => w.id === request.params.id && w.organizationId === orgId
+      );
+      if (!existing) {
+        return reply.status(404).send({
+          error: 'WEBHOOK_NOT_FOUND',
+          message: 'Webhook saliente no encontrado.'
+        });
+      }
+      runtimeStore.outboundWebhooks = runtimeStore.outboundWebhooks.filter(
+        (w) => !(w.id === request.params.id && w.organizationId === orgId)
+      );
+      runtimeStore.persistStateToDisk();
+      return { success: true };
     }
   );
 

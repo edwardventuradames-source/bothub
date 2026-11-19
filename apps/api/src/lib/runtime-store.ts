@@ -15,7 +15,8 @@ import {
 import {
   decryptSecret,
   encryptSecret,
-  generateRandomOpaqueToken
+  generateRandomOpaqueToken,
+  hashOpaqueToken
 } from './crypto.js';
 
 import { resolveSessionsDir } from '../config/env.js';
@@ -55,6 +56,16 @@ export interface StoredUserRecord extends OrganizationUserDto {
   passwordHash: string;
 }
 
+export interface StoredApiKeyRecord extends ApiKeyDto {
+  organizationId: string;
+  keyHash: string;
+}
+
+export interface StoredOutboundWebhookRecord extends OutboundWebhookConfigDto {
+  organizationId: string;
+  encryptedSecret: string;
+}
+
 export function maskSecretValue(secret: string): string {
   if (secret.length <= 8) {
     return '••••••••';
@@ -71,8 +82,8 @@ class RuntimeStore {
   public conversations: ConversationDto[] = [];
   public contacts: ContactDto[] = [];
   public logs: BotLogDto[] = [];
-  public apiKeys: ApiKeyDto[] = [];
-  public outboundWebhooks: OutboundWebhookConfigDto[] = [];
+  public apiKeys: StoredApiKeyRecord[] = [];
+  public outboundWebhooks: StoredOutboundWebhookRecord[] = [];
 
   constructor() {
     this.reloadUsersFromDisk();
@@ -96,8 +107,8 @@ class RuntimeStore {
         conversations?: ConversationDto[];
         contacts?: ContactDto[];
         logs?: BotLogDto[];
-        apiKeys?: ApiKeyDto[];
-        outboundWebhooks?: OutboundWebhookConfigDto[];
+        apiKeys?: StoredApiKeyRecord[];
+        outboundWebhooks?: StoredOutboundWebhookRecord[];
       };
 
       if (Array.isArray(parsed.bots)) this.bots = parsed.bots;
@@ -111,9 +122,22 @@ class RuntimeStore {
       if (Array.isArray(parsed.conversations)) this.conversations = parsed.conversations;
       if (Array.isArray(parsed.contacts)) this.contacts = parsed.contacts;
       if (Array.isArray(parsed.logs)) this.logs = parsed.logs;
-      if (Array.isArray(parsed.apiKeys)) this.apiKeys = parsed.apiKeys;
+      if (Array.isArray(parsed.apiKeys)) {
+        this.apiKeys = parsed.apiKeys.map((k) => {
+          const { rawKeyPreview: _removed, ...rest } = k;
+          return {
+            ...rest,
+            organizationId: rest.organizationId || DEFAULT_ORG_ID,
+            keyHash: rest.keyHash || ''
+          };
+        });
+      }
       if (Array.isArray(parsed.outboundWebhooks)) {
-        this.outboundWebhooks = parsed.outboundWebhooks;
+        this.outboundWebhooks = parsed.outboundWebhooks.map((w) => ({
+          ...w,
+          organizationId: w.organizationId || DEFAULT_ORG_ID,
+          encryptedSecret: w.encryptedSecret || ''
+        }));
       }
     } catch {
       void 0;
@@ -357,6 +381,7 @@ class RuntimeStore {
   }
 
   public appendLog(entry: {
+    organizationId?: string;
     botId: string | null;
     botName?: string;
     level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
@@ -367,6 +392,7 @@ class RuntimeStore {
     const bot = entry.botId ? this.bots.find((item) => item.id === entry.botId) : null;
     const logItem: BotLogDto = {
       id: `log-${crypto.randomUUID().slice(0, 8)}`,
+      organizationId: entry.organizationId ?? bot?.organizationId,
       botId: entry.botId,
       botName: entry.botName ?? bot?.name ?? 'Sistema BotHub',
       level: entry.level,
@@ -383,20 +409,73 @@ class RuntimeStore {
     return logItem;
   }
 
-  public createApiKey(name: string, scopes: string[]): ApiKeyDto {
-    const rawSecret = `bh_live_${generateRandomOpaqueToken(18)}`;
-    const newKey: ApiKeyDto = {
+  public createApiKey(
+    organizationId: string,
+    name: string,
+    scopes: string[]
+  ): ApiKeyDto {
+    const rawSecret = `bh_live_${generateRandomOpaqueToken(24)}`;
+    const record: StoredApiKeyRecord = {
       id: `ak-${crypto.randomUUID().slice(0, 8)}`,
+      organizationId,
       name,
       keyPrefix: rawSecret.slice(0, 14),
+      keyHash: hashOpaqueToken(rawSecret),
       scopes,
       lastUsedAt: null,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    };
+    this.apiKeys.unshift(record);
+    this.persistStateToDisk();
+    return {
+      id: record.id,
+      organizationId: record.organizationId,
+      name: record.name,
+      keyPrefix: record.keyPrefix,
+      scopes: record.scopes,
+      lastUsedAt: record.lastUsedAt,
+      createdAt: record.createdAt,
       rawKeyPreview: rawSecret
     };
-    this.apiKeys.unshift(newKey);
+  }
+
+  public getPublicApiKeys(organizationId: string): ApiKeyDto[] {
+    return this.apiKeys
+      .filter((k) => k.organizationId === organizationId)
+      .map(({ keyHash: _h, rawKeyPreview: _raw, ...publicItem }) => publicItem);
+  }
+
+  public createOutboundWebhook(
+    organizationId: string,
+    input: {
+      name: string;
+      targetUrl: string;
+      events: string[];
+      secretToken: string;
+      isActive: boolean;
+    }
+  ): OutboundWebhookConfigDto {
+    const record: StoredOutboundWebhookRecord = {
+      id: `wh-out-${crypto.randomUUID().slice(0, 8)}`,
+      organizationId,
+      name: input.name,
+      targetUrl: input.targetUrl,
+      events: input.events,
+      maskedSecret: maskSecretValue(input.secretToken),
+      encryptedSecret: encryptSecret(input.secretToken),
+      isActive: input.isActive,
+      createdAt: new Date().toISOString()
+    };
+    this.outboundWebhooks.unshift(record);
     this.persistStateToDisk();
-    return newKey;
+    const { encryptedSecret: _enc, ...publicWebhook } = record;
+    return publicWebhook;
+  }
+
+  public getPublicOutboundWebhooks(organizationId: string): OutboundWebhookConfigDto[] {
+    return this.outboundWebhooks
+      .filter((w) => w.organizationId === organizationId)
+      .map(({ encryptedSecret: _enc, ...publicItem }) => publicItem);
   }
 
   public getDashboardMetrics(organizationId?: string): DashboardMetricsDto {
