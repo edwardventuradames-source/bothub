@@ -9,16 +9,21 @@ import {
   ConversationMessageDto,
   ConversationStatus,
   FlowDto,
-  FlowEdge,
   FlowExecutionStepLog,
-  FlowNode,
-  FlowVersionDto,
   WhatsAppDriverType
 } from '@bothub/shared';
 import { prisma } from './prisma.js';
 import { redis } from './redis.js';
 import { logger } from './logger.js';
 import { createDefaultBusinessHours } from './runtime-seed-graphs.js';
+import {
+  hydrateStandaloneFlowsFromDb,
+  mapDbFlowRecordToDto,
+  syncFlowToDb,
+  deleteFlowFromDb
+} from './persistence-flows.js';
+
+export { syncFlowToDb, deleteFlowFromDb };
 import {
   StoredApiKeyRecord,
   StoredChatwootSecrets,
@@ -121,7 +126,7 @@ export async function hydrateStoreFromDatabase(target: {
         lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
         createdAt: u.createdAt.toISOString(),
         passwordHash: u.passwordHash,
-        tokenVersion: 1
+        tokenVersion: u.tokenVersion
       }));
     }
 
@@ -203,57 +208,9 @@ export async function hydrateStoreFromDatabase(target: {
       const mainFlow = dbBot.flows.find((f) => f.isMainMenu) ?? dbBot.flows[0] ?? null;
 
       for (const dbFlow of dbBot.flows) {
-        const draftVersion: FlowVersionDto = {
-          id: `fv-${dbFlow.id}-draft`,
-          versionNumber: Math.max(dbFlow.publishedVersion, 1),
-          status: 'DRAFT',
-          nodes: (dbFlow.draftNodes as unknown as FlowNode[]) ?? [],
-          edges: (dbFlow.draftEdges as unknown as FlowEdge[]) ?? [],
-          publishedAt: null,
-          createdAt: dbFlow.updatedAt.toISOString()
-        };
-
-        const publishedVersion: FlowVersionDto | null =
-          dbFlow.publishedNodes && dbFlow.publishedEdges
-            ? {
-                id: `fv-${dbFlow.id}-pub`,
-                versionNumber: Math.max(dbFlow.publishedVersion, 1),
-                status: 'PUBLISHED',
-                nodes: dbFlow.publishedNodes as unknown as FlowNode[],
-                edges: dbFlow.publishedEdges as unknown as FlowEdge[],
-                publishedAt: dbFlow.updatedAt.toISOString(),
-                createdAt: dbFlow.updatedAt.toISOString()
-              }
-            : null;
-
-        const versions: FlowVersionDto[] = dbFlow.versions.map((ver) => ({
-          id: ver.id,
-          versionNumber: ver.versionNumber,
-          status: ver.versionNumber === dbFlow.publishedVersion ? 'PUBLISHED' : 'DRAFT',
-          nodes: (ver.nodes as unknown as FlowNode[]) ?? [],
-          edges: (ver.edges as unknown as FlowEdge[]) ?? [],
-          publishedAt:
-            ver.versionNumber === dbFlow.publishedVersion
-              ? ver.createdAt.toISOString()
-              : null,
-          createdAt: ver.createdAt.toISOString()
-        }));
-
-        hydratedFlows.push({
-          id: dbFlow.id,
-          organizationId: dbBot.organizationId,
-          name: dbFlow.name,
-          description: dbFlow.description ?? '',
-          botId: dbBot.id,
-          botName: dbBot.name,
-          isMainMenu: dbFlow.isMainMenu,
-          activeVersionNumber: Math.max(dbFlow.publishedVersion, 1),
-          draftVersion,
-          publishedVersion,
-          versions: versions.length > 0 ? versions : [draftVersion],
-          createdAt: dbFlow.createdAt.toISOString(),
-          updatedAt: dbFlow.updatedAt.toISOString()
-        });
+        hydratedFlows.push(
+          mapDbFlowRecordToDto(dbFlow, dbBot.organizationId, dbBot.name)
+        );
       }
 
       const scheduleDays = Array.isArray(dbBot.businessHours?.scheduleJson)
@@ -457,6 +414,13 @@ export async function hydrateStoreFromDatabase(target: {
       });
     }
 
+    const standaloneFlows = await hydrateStandaloneFlowsFromDb();
+    for (const sf of standaloneFlows) {
+      if (!hydratedFlows.some((f) => f.id === sf.id)) {
+        hydratedFlows.push(sf);
+      }
+    }
+
     if (hydratedBots.length > 0) target.bots = hydratedBots;
     if (hydratedFlows.length > 0) target.flows = hydratedFlows;
     if (hydratedContacts.length > 0) target.contacts = hydratedContacts;
@@ -592,74 +556,6 @@ export async function syncChatwootSecretsToDb(
   }
 }
 
-export async function syncFlowToDb(flow: FlowDto): Promise<void> {
-  if (!isDatabaseConfigured() || !flow.botId) return;
-  try {
-    const botExists = await prisma.bot.findFirst({
-      where: { id: flow.botId, organizationId: flow.organizationId }
-    });
-    if (!botExists) return;
-
-    await prisma.flow.upsert({
-      where: { id: flow.id },
-      update: {
-        botId: flow.botId,
-        name: flow.name,
-        description: flow.description,
-        isMainMenu: flow.isMainMenu,
-        draftNodes: toJsonInput(flow.draftVersion.nodes),
-        draftEdges: toJsonInput(flow.draftVersion.edges),
-        publishedNodes: flow.publishedVersion
-          ? toJsonInput(flow.publishedVersion.nodes)
-          : Prisma.JsonNull,
-        publishedEdges: flow.publishedVersion
-          ? toJsonInput(flow.publishedVersion.edges)
-          : Prisma.JsonNull,
-        publishedVersion: flow.publishedVersion ? flow.activeVersionNumber : 0
-      },
-      create: {
-        id: flow.id,
-        botId: flow.botId,
-        name: flow.name,
-        description: flow.description,
-        isMainMenu: flow.isMainMenu,
-        draftNodes: toJsonInput(flow.draftVersion.nodes),
-        draftEdges: toJsonInput(flow.draftVersion.edges),
-        publishedNodes: flow.publishedVersion
-          ? toJsonInput(flow.publishedVersion.nodes)
-          : Prisma.JsonNull,
-        publishedEdges: flow.publishedVersion
-          ? toJsonInput(flow.publishedVersion.edges)
-          : Prisma.JsonNull,
-        publishedVersion: flow.publishedVersion ? flow.activeVersionNumber : 0
-      }
-    });
-
-    if (flow.publishedVersion) {
-      await prisma.flowVersion.upsert({
-        where: {
-          flowId_versionNumber: {
-            flowId: flow.id,
-            versionNumber: flow.publishedVersion.versionNumber
-          }
-        },
-        update: {
-          nodes: toJsonInput(flow.publishedVersion.nodes),
-          edges: toJsonInput(flow.publishedVersion.edges)
-        },
-        create: {
-          flowId: flow.id,
-          versionNumber: flow.publishedVersion.versionNumber,
-          nodes: toJsonInput(flow.publishedVersion.nodes),
-          edges: toJsonInput(flow.publishedVersion.edges)
-        }
-      });
-    }
-  } catch (err) {
-    logger.warn({ flowId: flow.id, err }, 'Failed syncing flow to PostgreSQL');
-  }
-}
-
 export async function syncConversationStateToDb(
   contact: ContactDto,
   conversation: ConversationDto
@@ -783,14 +679,5 @@ export async function deleteBotFromDb(botId: string): Promise<void> {
     await prisma.bot.deleteMany({ where: { id: botId } });
   } catch (err) {
     logger.warn({ botId, err }, 'Failed deleting bot from PostgreSQL');
-  }
-}
-
-export async function deleteFlowFromDb(flowId: string): Promise<void> {
-  if (!isDatabaseConfigured()) return;
-  try {
-    await prisma.flow.deleteMany({ where: { id: flowId } });
-  } catch (err) {
-    logger.warn({ flowId, err }, 'Failed deleting flow from PostgreSQL');
   }
 }

@@ -69,6 +69,7 @@ model Organization {
   logs          BotLog[]
   apiKeys       ApiKey[]
   webhooks      WebhookConfig[]
+  flows         Flow[]
 }
 
 model User {
@@ -81,6 +82,7 @@ model User {
   role                UserRole             @default(ADMIN)
   avatarUrl           String?
   isActive            Boolean              @default(true)
+  tokenVersion        Int                  @default(1)
   lastLoginAt         DateTime?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -169,8 +171,10 @@ model ChatwootConfig {
 
 model Flow {
   id               String           @id @default(uuid())
-  botId            String
-  bot              Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  organizationId   String?
+  organization     Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  botId            String?
+  bot              Bot?             @relation(fields: [botId], references: [id], onDelete: SetNull)
   name             String
   description      String?
   triggerMode      TriggerMatchMode @default(MAIN_MENU)

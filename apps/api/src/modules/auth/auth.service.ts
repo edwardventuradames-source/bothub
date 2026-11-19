@@ -1,6 +1,4 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import {
   AuthUserDto,
@@ -9,7 +7,6 @@ import {
   RegisterInput,
   ResetPasswordInput
 } from '@bothub/shared';
-import { resolveSessionsDir } from '../../config/env.js';
 import { isDatabaseConfigured } from '../../lib/persistence.js';
 import { prisma } from '../../lib/prisma.js';
 import {
@@ -17,136 +14,24 @@ import {
   hashOpaqueToken
 } from '../../lib/crypto.js';
 import { runtimeStore } from '../../lib/runtime-store.js';
+import {
+  fallbackRefreshTokens,
+  fallbackResetTokens,
+  minUserTokenVersions,
+  persistFallbackRefreshTokensToDisk,
+  persistTokenRevocationsToDisk,
+  revokedAccessJtis,
+  revokeAccessTokenJti
+} from './auth-token-store.js';
+
+export { revokeAccessTokenJti };
 
 const BCRYPT_SALT_ROUNDS = 12;
 const REFRESH_TOKEN_TTL_DAYS = 7;
 const PASSWORD_RESET_TTL_MINUTES = 30;
-const ACCESS_TOKEN_MAX_REVOKE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MILLISECONDS_PER_MINUTE = 60 * 1000;
 const MILLISECONDS_PER_DAY = 24 * 60 * MILLISECONDS_PER_MINUTE;
 const DUMMY_BCRYPT_HASH = bcrypt.hashSync(generateRandomOpaqueToken(16), BCRYPT_SALT_ROUNDS);
-const REFRESH_TOKENS_FILE = path.join(resolveSessionsDir(), 'refresh-tokens.json');
-const TOKEN_REVOCATIONS_FILE = path.join(resolveSessionsDir(), 'token-revocations.json');
-
-const fallbackRefreshTokens = new Map<
-  string,
-  { userId: string; expiresAt: number; revoked: boolean }
->();
-const fallbackResetTokens = new Map<
-  string,
-  { userId: string; expiresAt: number; used: boolean }
->();
-const revokedAccessJtis = new Map<string, number>();
-const minUserTokenVersions = new Map<string, number>();
-
-function isTestRuntime(): boolean {
-  return process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
-}
-
-function loadTokenRevocationsFromDisk(): void {
-  if (isTestRuntime()) return;
-  try {
-    if (!fs.existsSync(TOKEN_REVOCATIONS_FILE)) return;
-    const raw = fs.readFileSync(TOKEN_REVOCATIONS_FILE, 'utf8');
-    const parsed = JSON.parse(raw) as {
-      jtis?: Array<[string, number]>;
-      userVersions?: Array<[string, number]>;
-    };
-    const now = Date.now();
-    if (Array.isArray(parsed.jtis)) {
-      for (const [jti, exp] of parsed.jtis) {
-        if (typeof jti === 'string' && typeof exp === 'number' && exp > now) {
-          revokedAccessJtis.set(jti, exp);
-        }
-      }
-    }
-    if (Array.isArray(parsed.userVersions)) {
-      for (const [uid, ver] of parsed.userVersions) {
-        if (typeof uid === 'string' && typeof ver === 'number' && ver > 1) {
-          minUserTokenVersions.set(uid, ver);
-        }
-      }
-    }
-  } catch {
-    void 0;
-  }
-}
-
-function persistTokenRevocationsToDisk(): void {
-  if (isTestRuntime()) return;
-  try {
-    const dir = resolveSessionsDir();
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    const now = Date.now();
-    const jtis = Array.from(revokedAccessJtis.entries()).filter(([, exp]) => exp > now);
-    const userVersions = Array.from(minUserTokenVersions.entries());
-    fs.writeFileSync(
-      TOKEN_REVOCATIONS_FILE,
-      JSON.stringify({ jtis, userVersions }),
-      { encoding: 'utf8', mode: 0o600 }
-    );
-  } catch {
-    void 0;
-  }
-}
-
-loadTokenRevocationsFromDisk();
-
-function loadFallbackRefreshTokensFromDisk(): void {
-  if (isTestRuntime()) return;
-  try {
-    if (!fs.existsSync(REFRESH_TOKENS_FILE)) return;
-    const raw = fs.readFileSync(REFRESH_TOKENS_FILE, 'utf8');
-    const entries = JSON.parse(raw) as Array<[string, { userId: string; expiresAt: number; revoked: boolean }]>;
-    if (!Array.isArray(entries)) return;
-    const now = Date.now();
-    for (const [hash, record] of entries) {
-      if (record && !record.revoked && record.expiresAt > now) {
-        fallbackRefreshTokens.set(hash, record);
-      }
-    }
-  } catch {
-    void 0;
-  }
-}
-
-function persistFallbackRefreshTokensToDisk(): void {
-  if (isTestRuntime()) return;
-  try {
-    const dir = resolveSessionsDir();
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    const now = Date.now();
-    const activeEntries = Array.from(fallbackRefreshTokens.entries()).filter(
-      ([, rec]) => !rec.revoked && rec.expiresAt > now
-    );
-    fs.writeFileSync(
-      REFRESH_TOKENS_FILE,
-      JSON.stringify(activeEntries),
-      { encoding: 'utf8', mode: 0o600 }
-    );
-  } catch {
-    void 0;
-  }
-}
-
-loadFallbackRefreshTokensFromDisk();
-
-export function revokeAccessTokenJti(jti: string | undefined, expSeconds?: number): void {
-  if (!jti) return;
-  const now = Date.now();
-  for (const [storedJti, expiresAt] of revokedAccessJtis.entries()) {
-    if (expiresAt <= now) {
-      revokedAccessJtis.delete(storedJti);
-    }
-  }
-  const expiresAtMs = expSeconds ? expSeconds * 1000 : now + ACCESS_TOKEN_MAX_REVOKE_WINDOW_MS;
-  revokedAccessJtis.set(jti, expiresAtMs);
-  persistTokenRevocationsToDisk();
-}
 
 export function bumpUserTokenVersion(userId: string): number {
   const user = runtimeStore.users.find((u) => u.id === userId);
@@ -168,6 +53,14 @@ export function bumpUserTokenVersion(userId: string): number {
   }
   persistFallbackRefreshTokensToDisk();
   persistTokenRevocationsToDisk();
+  if (isDatabaseConfigured()) {
+    void prisma.user
+      .updateMany({
+        where: { id: userId },
+        data: { tokenVersion: nextVersion }
+      })
+      .catch(() => undefined);
+  }
   return nextVersion;
 }
 
@@ -207,9 +100,16 @@ export async function isAccessTokenValidForUser(payload: {
     try {
       const dbUser = await prisma.user.findUnique({
         where: { id: payload.sub },
-        select: { isActive: true }
+        select: { isActive: true, tokenVersion: true }
       });
-      return Boolean(dbUser && dbUser.isActive);
+      if (!dbUser || !dbUser.isActive) {
+        return false;
+      }
+      const effectiveVersion = Math.max(dbUser.tokenVersion, minVersion);
+      if (payload.tokenVersion !== undefined && payload.tokenVersion < effectiveVersion) {
+        return false;
+      }
+      return true;
     } catch {
       return false;
     }
@@ -472,7 +372,7 @@ export async function authenticateWithPassword(
       return {
         user: mapUserToDto(userRecord),
         rawRefreshToken,
-        tokenVersion: getUserTokenVersion(userRecord.id)
+        tokenVersion: Math.max(userRecord.tokenVersion, getUserTokenVersion(userRecord.id))
       };
     }
   } catch (err) {
@@ -576,7 +476,10 @@ export async function rotateRefreshToken(
       return {
         user: mapUserToDto(existingToken.user),
         rawRefreshToken: nextRawRefreshToken,
-        tokenVersion: getUserTokenVersion(existingToken.userId)
+        tokenVersion: Math.max(
+          existingToken.user.tokenVersion,
+          getUserTokenVersion(existingToken.userId)
+        )
       };
     }
   } catch (err) {
