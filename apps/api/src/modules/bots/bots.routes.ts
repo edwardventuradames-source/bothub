@@ -11,7 +11,11 @@ import {
   DEFAULT_ORG_ID,
   runtimeStore
 } from '../../lib/runtime-store.js';
-import { deleteBotFromDb, syncBotRecordToDb } from '../../lib/persistence.js';
+import {
+  deleteBotFromDb,
+  syncBotRecordToDb,
+  syncFlowToDb
+} from '../../lib/persistence.js';
 import { assertSafeExternalUrl } from '../../lib/ssrf-guard.js';
 import { createDefaultBusinessHours } from '../../lib/runtime-seed-graphs.js';
 import { whatsappProvider } from '../whatsapp/whatsapp.provider.js';
@@ -107,6 +111,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         activeFlowId: matchedFlow?.id ?? null,
         activeFlowName: matchedFlow?.name ?? null,
         timezone: data.timezone || 'America/Bogota',
+        businessHoursEnabled: data.businessHoursEnabled ?? false,
         outOfHoursMessage:
           data.outOfHoursMessage ||
           'Gracias por comunicarte. Estamos fuera de horario.',
@@ -123,20 +128,32 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         lastConnectedAt: null,
         chatwootConfig: null,
         cloudApiConfig: null,
-        businessHours: createDefaultBusinessHours(),
-        quickReplies: [],
+        businessHours:
+          data.businessHours && data.businessHours.length > 0
+            ? data.businessHours
+            : createDefaultBusinessHours(),
+        quickReplies: (data.quickReplies ?? []).map((item, idx) => ({
+          id: item.id ?? `qr-${Date.now()}-${idx}`,
+          title: item.title,
+          keywords: item.keywords,
+          responseText: item.responseText,
+          matchMode: item.matchMode,
+          isActive: item.isActive
+        })),
         createdAt: nowIso,
         updatedAt: nowIso
       };
 
       runtimeStore.bots.unshift(newBot);
       runtimeStore.appendLog({
+        organizationId: orgId,
         botId: newBot.id,
         botName: newBot.name,
         level: 'INFO',
         event: 'bot.created',
         message: `Bot "${newBot.name}" creado con driver ${newBot.driver}.`
       });
+      runtimeStore.persistStateToDisk();
       void syncBotRecordToDb(newBot);
 
       return reply.status(201).send({ bot: newBot });
@@ -177,6 +194,9 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     if (patch.driver !== undefined) bot.driver = patch.driver;
     if (patch.isActive !== undefined) bot.isActive = patch.isActive;
     if (patch.timezone !== undefined) bot.timezone = patch.timezone;
+    if (patch.businessHoursEnabled !== undefined) {
+      bot.businessHoursEnabled = patch.businessHoursEnabled;
+    }
     if (patch.outOfHoursMessage !== undefined && patch.outOfHoursMessage !== null) {
       bot.outOfHoursMessage = patch.outOfHoursMessage;
     }
@@ -282,12 +302,14 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
 
       runtimeStore.bots.unshift(copy);
       runtimeStore.appendLog({
+        organizationId: orgId,
         botId: copy.id,
         botName: copy.name,
         level: 'INFO',
         event: 'bot.duplicated',
         message: `Bot duplicado a partir de "${source.name}".`
       });
+      runtimeStore.persistStateToDisk();
       void syncBotRecordToDb(copy);
 
       return reply.status(201).send({ bot: copy });
@@ -310,21 +332,34 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const willPause = bot.status !== 'PAUSED';
-    bot.status = willPause ? 'PAUSED' : 'CONNECTED';
-    bot.isActive = !willPause;
-    bot.updatedAt = new Date().toISOString();
-    runtimeStore.persistStateToDisk();
-    void syncBotRecordToDb(bot);
-
-    if (bot.driver === 'BAILEYS') {
-      if (willPause) {
+    if (willPause) {
+      if (bot.driver === 'BAILEYS') {
         await whatsappProvider.disconnectBot(bot.id, bot.organizationId, 'BAILEYS');
-        bot.status = 'PAUSED';
-        bot.isActive = false;
+      }
+      bot.status = 'PAUSED';
+      bot.isActive = false;
+    } else {
+      bot.isActive = true;
+      if (bot.driver === 'BAILEYS') {
+        const state = await whatsappProvider.connectBot(
+          bot.id,
+          bot.organizationId,
+          'BAILEYS'
+        );
+        bot.status = state.status;
+      } else if (bot.driver === 'CLOUD_API') {
+        const hasCloudConfig = Boolean(runtimeStore.getCloudApiConfigDto(bot.id));
+        bot.status = hasCloudConfig ? 'CONNECTED' : 'DISCONNECTED';
       } else {
-        await whatsappProvider.connectBot(bot.id, bot.organizationId, 'BAILEYS');
+        const hasChatwootConfig = Boolean(runtimeStore.getChatwootConfigDto(bot.id));
+        bot.status = hasChatwootConfig ? 'CONNECTED' : 'DISCONNECTED';
       }
     }
+
+    bot.updatedAt = new Date().toISOString();
+    runtimeStore.syncBotLiveCounters(orgId);
+    runtimeStore.persistStateToDisk();
+    void syncBotRecordToDb(bot);
 
     if (app.io) {
       app.io.to(`org:${bot.organizationId}`).emit('whatsapp:status', {
@@ -559,13 +594,23 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         whatsappProvider.bindSocketServer(app.io);
       }
 
-      await whatsappProvider.saveCloudApiConfig(bot.id, bot.organizationId, {
-        phoneNumberId: parsed.data.phoneNumberId,
-        wabaId: parsed.data.wabaId,
-        accessToken: parsed.data.accessToken,
-        verifyToken: parsed.data.verifyToken,
-        appSecret: parsed.data.appSecret || undefined
-      });
+      try {
+        await whatsappProvider.saveCloudApiConfig(bot.id, bot.organizationId, {
+          phoneNumberId: parsed.data.phoneNumberId,
+          wabaId: parsed.data.wabaId,
+          accessToken: parsed.data.accessToken,
+          verifyToken: parsed.data.verifyToken,
+          appSecret: parsed.data.appSecret || undefined
+        });
+      } catch (err) {
+        return reply.status(400).send({
+          error: 'VALIDATION_ERROR',
+          message:
+            err instanceof Error
+              ? err.message
+              : 'Credenciales de WhatsApp Cloud API inválidas.'
+        });
+      }
       return { bot };
     }
   );
@@ -592,13 +637,25 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       }
       const [removed] = runtimeStore.bots.splice(idx, 1);
       await whatsappProvider.disconnectBot(removed.id, removed.organizationId, removed.driver);
-      void deleteBotFromDb(removed.id);
+      runtimeStore.chatwootSecrets.delete(removed.id);
+      runtimeStore.cloudApiSecrets.delete(removed.id);
+      for (const flow of runtimeStore.flows) {
+        if (flow.organizationId === orgId && flow.botId === removed.id) {
+          flow.botId = null;
+          flow.botName = null;
+          flow.isMainMenu = false;
+          void syncFlowToDb(flow);
+        }
+      }
       runtimeStore.appendLog({
+        organizationId: orgId,
         botId: null,
         level: 'WARN',
         event: 'bot.deleted',
         message: `Bot "${removed.name}" eliminado de la organización.`
       });
+      runtimeStore.persistStateToDisk();
+      void deleteBotFromDb(removed.id);
       return { success: true };
     }
   );

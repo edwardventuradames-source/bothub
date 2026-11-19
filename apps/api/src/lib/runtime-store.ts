@@ -256,9 +256,7 @@ class RuntimeStore {
     const bot = this.bots.find((item) => item.id === botId);
     if (bot) {
       bot.chatwootConfig = this.getChatwootConfigDto(botId);
-      bot.status = 'CONNECTED';
-      bot.isActive = true;
-      bot.lastConnectedAt = new Date().toISOString();
+      bot.isActive = input.isActive ?? true;
       bot.updatedAt = new Date().toISOString();
     }
     this.persistStateToDisk();

@@ -91,14 +91,31 @@ export class CloudApiDriver implements WhatsAppProviderDriver {
       throw new Error('Bot no encontrado');
     }
 
+    const existingSecrets = runtimeStore.getDecryptedCloudApiCredentials(botId);
+    const trimmedAccessToken = credentials.accessToken?.trim() ?? '';
+    const trimmedVerifyToken = credentials.verifyToken?.trim() ?? '';
+    const resolvedAccessToken =
+      trimmedAccessToken || existingSecrets?.accessToken || '';
+    const resolvedVerifyToken =
+      trimmedVerifyToken || existingSecrets?.verifyToken || '';
+
+    if (resolvedAccessToken.length < 8) {
+      throw new Error(
+        'Token de acceso de Cloud API inválido (mínimo 8 caracteres).'
+      );
+    }
+    if (resolvedVerifyToken.length < 6) {
+      throw new Error('Verify Token inválido (mínimo 6 caracteres).');
+    }
+
     const resolvedWabaId =
       credentials.wabaId || credentials.businessAccountId || '';
 
     runtimeStore.saveCloudApiConfigForBot(botId, {
       phoneNumberId: credentials.phoneNumberId,
       wabaId: resolvedWabaId,
-      accessToken: credentials.accessToken,
-      verifyToken: credentials.verifyToken,
+      accessToken: resolvedAccessToken,
+      verifyToken: resolvedVerifyToken,
       appSecret: credentials.appSecret
     });
 
@@ -115,6 +132,7 @@ export class CloudApiDriver implements WhatsAppProviderDriver {
     void syncBotRecordToDb(bot, storedCloudSecrets);
 
     runtimeStore.appendLog({
+      organizationId: bot.organizationId,
       botId: bot.id,
       botName: bot.name,
       level: 'INFO',

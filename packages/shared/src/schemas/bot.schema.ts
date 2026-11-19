@@ -48,7 +48,7 @@ export const CreateBotInputSchema = z.object({
   businessHours: z.array(BusinessHoursDaySchema).optional(),
   quickReplies: z.array(QuickReplyInputSchema).optional()
 });
-export type CreateBotInput = z.infer<typeof CreateBotInputSchema>;
+export type CreateBotInput = z.input<typeof CreateBotInputSchema>;
 
 export const UpdateBotInputSchema = CreateBotInputSchema.partial();
 export type UpdateBotInput = z.infer<typeof UpdateBotInputSchema>;
@@ -56,21 +56,67 @@ export type UpdateBotInput = z.infer<typeof UpdateBotInputSchema>;
 export const CloudApiConfigInputSchema = z.object({
   phoneNumberId: z.string().min(4).max(64).trim(),
   wabaId: z.string().min(4).max(64).trim(),
-  accessToken: z.string().min(8).trim(),
-  verifyToken: z.string().min(6).max(128).trim(),
-  appSecret: z.string().min(8).max(128).trim().optional().or(z.literal(''))
+  accessToken: z
+    .string()
+    .trim()
+    .optional()
+    .default('')
+    .refine((val) => val.length === 0 || val.length >= 8, {
+      message: 'Access token debe tener al menos 8 caracteres.'
+    }),
+  verifyToken: z
+    .string()
+    .trim()
+    .max(128)
+    .optional()
+    .default('')
+    .refine((val) => val.length === 0 || val.length >= 6, {
+      message: 'Verify token debe tener al menos 6 caracteres.'
+    }),
+  appSecret: z
+    .string()
+    .trim()
+    .max(128)
+    .optional()
+    .default('')
+    .refine((val) => val.length === 0 || val.length >= 8, {
+      message: 'App secret debe tener al menos 8 caracteres.'
+    })
 });
-export type CloudApiConfigInput = z.infer<typeof CloudApiConfigInputSchema>;
+export type CloudApiConfigInput = z.input<typeof CloudApiConfigInputSchema>;
 
 export const CloudApiCredentialsInputSchema = z.object({
   phoneNumberId: z.string().min(4).max(64).trim(),
   businessAccountId: z.string().min(4).max(64).trim().optional(),
   wabaId: z.string().min(4).max(64).trim().optional(),
-  accessToken: z.string().min(8).trim(),
-  verifyToken: z.string().min(6).max(128).trim(),
-  appSecret: z.string().min(8).max(128).optional()
+  accessToken: z
+    .string()
+    .trim()
+    .optional()
+    .default('')
+    .refine((val) => val.length === 0 || val.length >= 8, {
+      message: 'Access token debe tener al menos 8 caracteres.'
+    }),
+  verifyToken: z
+    .string()
+    .trim()
+    .max(128)
+    .optional()
+    .default('')
+    .refine((val) => val.length === 0 || val.length >= 6, {
+      message: 'Verify token debe tener al menos 6 caracteres.'
+    }),
+  appSecret: z
+    .string()
+    .trim()
+    .max(128)
+    .optional()
+    .default('')
+    .refine((val) => val.length === 0 || val.length >= 8, {
+      message: 'App secret debe tener al menos 8 caracteres.'
+    })
 });
-export type CloudApiCredentialsInput = z.infer<typeof CloudApiCredentialsInputSchema>;
+export type CloudApiCredentialsInput = z.input<typeof CloudApiCredentialsInputSchema>;
 
 export interface CloudApiConfigDto {
   phoneNumberId: string;

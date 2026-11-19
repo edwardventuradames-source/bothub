@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Loader2, QrCode, RefreshCw, ShieldCheck, Unplug } from 'lucide-react';
+import { Copy, Loader2, QrCode, RefreshCw, ShieldCheck, Unplug } from 'lucide-react';
 import { BotDto } from '@bothub/shared';
 import { botsApi } from '../../lib/api.js';
 
@@ -76,11 +76,14 @@ export function BotWhatsAppTab({
       const { bot } = await botsApi.saveCloudApi(selectedBot.id, {
         phoneNumberId: cloudPhoneId.trim(),
         wabaId: cloudWabaId.trim(),
-        accessToken: cloudAccessToken.trim(),
-        verifyToken: cloudVerifyToken.trim(),
+        accessToken: cloudAccessToken.trim() || undefined,
+        verifyToken: cloudVerifyToken.trim() || undefined,
         appSecret: cloudAppSecret.trim() || undefined
       });
       onBotUpdated(bot);
+      setCloudAccessToken('');
+      setCloudVerifyToken('');
+      setCloudAppSecret('');
       onFeedback('ok', 'WhatsApp Cloud API oficial configurada y activa.');
     } catch (err) {
       onFeedback(
@@ -89,6 +92,16 @@ export function BotWhatsAppTab({
       );
     } finally {
       setIsBusy(false);
+    }
+  }
+
+  async function handleCopyCloudWebhook(): Promise<void> {
+    const webhookUrl = `${window.location.origin}${selectedBot.cloudApiConfig?.webhookPath ?? `/api/webhooks/whatsapp-cloud/${selectedBot.id}`}`;
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      onFeedback('ok', 'URL de Webhook Cloud API copiada al portapapeles.');
+    } catch {
+      onFeedback('err', 'No se pudo copiar la URL automáticamente.');
     }
   }
 
@@ -185,6 +198,9 @@ export function BotWhatsAppTab({
     );
   }
 
+  const hasExistingCloudConfig = Boolean(selectedBot.cloudApiConfig);
+  const cloudWebhookUrl = `${window.location.origin}${selectedBot.cloudApiConfig?.webhookPath ?? `/api/webhooks/whatsapp-cloud/${selectedBot.id}`}`;
+
   return (
     <div className="mt-6 grid grid-cols-1 gap-6">
       <form
@@ -192,7 +208,7 @@ export function BotWhatsAppTab({
         className="flex flex-col justify-between rounded-2xl border border-soft-line bg-soft-bg p-5"
       >
         <div>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-extrabold uppercase tracking-wider text-soft-blue">
               Driver Oficial WhatsApp Cloud API (Meta)
             </span>
@@ -201,6 +217,27 @@ export function BotWhatsAppTab({
               Tokens Cifrados + Firma HMAC-SHA256
             </span>
           </div>
+
+          <div className="mt-3 rounded-xl border border-soft-line bg-soft-card p-3">
+            <span className="block text-[11px] font-bold text-soft-muted">
+              Callback URL para Meta Developers Webhook:
+            </span>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <code className="min-w-0 truncate text-[11px] font-bold text-soft-ink">
+                {cloudWebhookUrl}
+              </code>
+              <button
+                type="button"
+                onClick={() => void handleCopyCloudWebhook()}
+                aria-label="Copiar URL de webhook Cloud API"
+                className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-soft-line bg-soft-bg px-2.5 py-1.5 text-[11px] font-bold text-soft-ink hover:border-soft-blue"
+              >
+                <Copy className="h-3 w-3" />
+                <span>Copiar</span>
+              </button>
+            </div>
+          </div>
+
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label
@@ -249,7 +286,12 @@ export function BotWhatsAppTab({
               id="cloud-access-token"
               name="accessToken"
               type="password"
-              required
+              required={!hasExistingCloudConfig}
+              placeholder={
+                selectedBot.cloudApiConfig?.hasAccessToken
+                  ? `Token actual (${selectedBot.cloudApiConfig.maskedAccessToken}) — dejar vacío para conservar`
+                  : 'EAAG...'
+              }
               value={cloudAccessToken}
               onChange={(e) => setCloudAccessToken(e.target.value)}
               className="w-full rounded-xl border border-soft-line bg-soft-card px-3 py-2 text-xs text-soft-ink"
@@ -268,7 +310,12 @@ export function BotWhatsAppTab({
                 id="cloud-verify-token"
                 name="verifyToken"
                 type="text"
-                required
+                required={!hasExistingCloudConfig}
+                placeholder={
+                  selectedBot.cloudApiConfig?.verifyTokenPreview
+                    ? `Actual (${selectedBot.cloudApiConfig.verifyTokenPreview}) — vacío para conservar`
+                    : 'Ej: verify_bothub_2026'
+                }
                 value={cloudVerifyToken}
                 onChange={(e) => setCloudVerifyToken(e.target.value)}
                 className="w-full rounded-xl border border-soft-line bg-soft-card px-3 py-2 text-xs text-soft-ink"
@@ -285,7 +332,11 @@ export function BotWhatsAppTab({
                 id="cloud-app-secret"
                 name="appSecret"
                 type="password"
-                placeholder="Recomendado en producción"
+                placeholder={
+                  selectedBot.cloudApiConfig?.hasAppSecret
+                    ? 'Configurado — dejar vacío para conservar'
+                    : 'Recomendado en producción'
+                }
                 value={cloudAppSecret}
                 onChange={(e) => setCloudAppSecret(e.target.value)}
                 className="w-full rounded-xl border border-soft-line bg-soft-card px-3 py-2 text-xs text-soft-ink"
@@ -299,7 +350,7 @@ export function BotWhatsAppTab({
           disabled={isBusy}
           className="mt-4 w-full rounded-xl bg-brand-gradient py-2.5 text-xs font-extrabold text-white shadow-brand-icon disabled:opacity-60"
         >
-          Guardar y Activar WhatsApp Cloud API
+          {isBusy ? 'Guardando credenciales...' : 'Guardar y Activar WhatsApp Cloud API'}
         </button>
       </form>
     </div>
