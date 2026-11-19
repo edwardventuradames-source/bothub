@@ -1,35 +1,18 @@
 import { FlowNode } from '@bothub/shared';
+import { assertSafeExternalUrl } from '../../lib/ssrf-guard.js';
 
 const ACTION_HTTP_TIMEOUT_MS = 8000;
 const MAX_RESPONSE_PREVIEW_CHARS = 1200;
-
-function isBlockedPrivateHost(hostname: string): boolean {
-  const lower = hostname.toLowerCase();
-  if (
-    lower === 'localhost' ||
-    lower === '127.0.0.1' ||
-    lower === '::1' ||
-    lower === '0.0.0.0' ||
-    lower === '169.254.169.254' ||
-    lower === 'metadata.google.internal' ||
-    lower.endsWith('.internal')
-  ) {
-    return true;
-  }
-
-  const ipv4Match = lower.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!ipv4Match) {
-    return false;
-  }
-
-  const a = Number(ipv4Match[1]);
-  const b = Number(ipv4Match[2]);
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  return false;
-}
+const MAX_RESPONSE_BYTES = 262144;
+const FORBIDDEN_HEADER_NAMES = new Set([
+  'host',
+  'content-length',
+  'connection',
+  'transfer-encoding',
+  'upgrade',
+  'proxy-authorization',
+  'te'
+]);
 
 function interpolateTemplate(
   template: string,
@@ -54,6 +37,39 @@ function extractJsonPathValue(payload: unknown, pathExpr: string): string {
     return '';
   }
   return typeof cursor === 'string' ? cursor : JSON.stringify(cursor);
+}
+
+async function readBoundedResponseText(response: Response): Promise<string> {
+  if (!response.body) {
+    return (await response.text()).slice(0, MAX_RESPONSE_BYTES);
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (value) {
+      const remaining = MAX_RESPONSE_BYTES - totalBytes;
+      if (remaining <= 0) {
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+      if (value.byteLength > remaining) {
+        chunks.push(value.subarray(0, remaining));
+        totalBytes += remaining;
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+      chunks.push(value);
+      totalBytes += value.byteLength;
+    }
+  }
+
+  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
 }
 
 export async function executeHttpRequestNode(
@@ -85,25 +101,19 @@ export async function executeHttpRequestNode(
     };
   }
 
-  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+  try {
+    parsedUrl = await assertSafeExternalUrl(parsedUrl.toString());
+  } catch (err) {
     return {
       ok: false,
       renderedUrl,
       method,
       statusCode: null,
       value: '',
-      errorMessage: `Protocolo no permitido: ${parsedUrl.protocol}`
-    };
-  }
-
-  if (isBlockedPrivateHost(parsedUrl.hostname)) {
-    return {
-      ok: false,
-      renderedUrl,
-      method,
-      statusCode: null,
-      value: '',
-      errorMessage: `Host bloqueado por política de seguridad SSRF: ${parsedUrl.hostname}`
+      errorMessage:
+        err instanceof Error
+          ? err.message
+          : `Host bloqueado por política de seguridad SSRF: ${parsedUrl.hostname}`
     };
   }
 
@@ -112,7 +122,7 @@ export async function executeHttpRequestNode(
   };
   if (node.data.headers && typeof node.data.headers === 'object') {
     for (const [key, val] of Object.entries(node.data.headers as Record<string, unknown>)) {
-      if (typeof val === 'string') {
+      if (typeof val === 'string' && !FORBIDDEN_HEADER_NAMES.has(key.toLowerCase())) {
         headers[key] = interpolateTemplate(val, variables);
       }
     }
@@ -131,11 +141,23 @@ export async function executeHttpRequestNode(
     const response = await fetch(parsedUrl.toString(), {
       method,
       headers,
+      redirect: 'manual',
       body: hasBody ? interpolateTemplate(rawBody, variables) : undefined,
       signal: controller.signal
     });
 
-    const rawText = await response.text();
+    if (response.status >= 300 && response.status < 400) {
+      return {
+        ok: false,
+        renderedUrl,
+        method,
+        statusCode: response.status,
+        value: '',
+        errorMessage: 'Redirección HTTP bloqueada por política de seguridad SSRF.'
+      };
+    }
+
+    const rawText = await readBoundedResponseText(response);
     let extractedValue = rawText.slice(0, MAX_RESPONSE_PREVIEW_CHARS);
 
     const jsonPath = typeof node.data.responsePath === 'string' ? node.data.responsePath.trim() : '';

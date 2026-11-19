@@ -1,4 +1,9 @@
 import { ChatwootConfigDto, FlowSimulationBotReply } from '@bothub/shared';
+import {
+  assertSafeExternalUrl,
+  isBlockedHostnameOrIp,
+  isSimulatedLocalHostname
+} from '../../lib/ssrf-guard.js';
 
 const HTTP_TIMEOUT_MS = 8000;
 
@@ -11,11 +16,10 @@ export function shouldCallRemoteChatwoot(
   }
   try {
     const parsed = new URL(baseUrl);
-    if (
-      parsed.hostname.endsWith('.local') ||
-      parsed.hostname === 'example.com' ||
-      parsed.hostname === 'localhost'
-    ) {
+    if (isSimulatedLocalHostname(parsed.hostname)) {
+      return false;
+    }
+    if (isBlockedHostnameOrIp(parsed.hostname)) {
       return false;
     }
     return parsed.protocol === 'https:' || parsed.protocol === 'http:';
@@ -48,6 +52,7 @@ export async function verifyChatwootConnectionApi(params: {
     };
   }
 
+  await assertSafeExternalUrl(params.config.baseUrl);
   const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/inboxes/${params.config.inboxId}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
@@ -60,6 +65,7 @@ export async function verifyChatwootConnectionApi(params: {
         Accept: 'application/json',
         api_access_token: params.apiAccessToken
       },
+      redirect: 'manual',
       signal: controller.signal
     });
     const latencyMs = Math.max(1, Date.now() - startedAt);
@@ -173,6 +179,7 @@ export async function sendMessageToChatwootApi(params: {
   const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
 
   try {
+    await assertSafeExternalUrl(params.config.baseUrl);
     const firstPayload = buildChatwootMessageBody({
       content: trimmedContent,
       isPrivate: params.isPrivate,
@@ -186,6 +193,7 @@ export async function sendMessageToChatwootApi(params: {
         'Content-Type': 'application/json',
         api_access_token: params.apiAccessToken
       },
+      redirect: 'manual',
       body: JSON.stringify(firstPayload),
       signal: controller.signal
     });
@@ -201,6 +209,7 @@ export async function sendMessageToChatwootApi(params: {
           'Content-Type': 'application/json',
           api_access_token: params.apiAccessToken
         },
+        redirect: 'manual',
         body: JSON.stringify(
           buildChatwootMessageBody({
             content: trimmedContent,
@@ -248,12 +257,14 @@ export async function toggleChatwootConversationStatusApi(params: {
   const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
 
   try {
+    await assertSafeExternalUrl(params.config.baseUrl);
     await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         api_access_token: params.apiAccessToken
       },
+      redirect: 'manual',
       body: JSON.stringify({ status: params.status }),
       signal: controller.signal
     });

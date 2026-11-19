@@ -13,6 +13,7 @@ import {
   runtimeStore
 } from '../../lib/runtime-store.js';
 import { syncConversationStateToDb } from '../../lib/persistence.js';
+import { assertSafeExternalUrl } from '../../lib/ssrf-guard.js';
 import { ChatwootService, ChatwootWebhookPayload } from '../chatwoot/chatwoot.service.js';
 import { whatsappProvider } from '../whatsapp/whatsapp.provider.js';
 import { BotNotFoundError } from '../whatsapp/inbound-pipeline.js';
@@ -395,6 +396,18 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         return reply.status(400).send({
           error: 'VALIDATION_ERROR',
           message: 'Configuración de webhook inválida.'
+        });
+      }
+
+      try {
+        await assertSafeExternalUrl(parsed.data.targetUrl);
+      } catch (err) {
+        return reply.status(400).send({
+          error: 'SSRF_BLOCKED',
+          message:
+            err instanceof Error
+              ? err.message
+              : 'La URL destino del webhook no está permitida por seguridad SSRF.'
         });
       }
 

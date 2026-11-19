@@ -12,6 +12,7 @@ import {
   runtimeStore
 } from '../../lib/runtime-store.js';
 import { deleteBotFromDb, syncBotRecordToDb } from '../../lib/persistence.js';
+import { assertSafeExternalUrl } from '../../lib/ssrf-guard.js';
 import { createDefaultBusinessHours } from '../../lib/runtime-seed-graphs.js';
 import { whatsappProvider } from '../whatsapp/whatsapp.provider.js';
 import { ChatwootService } from '../chatwoot/chatwoot.service.js';
@@ -444,6 +445,18 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(400).send({
           error: 'VALIDATION_ERROR',
           message: 'Configuración de Chatwoot inválida.'
+        });
+      }
+
+      try {
+        await assertSafeExternalUrl(parsed.data.baseUrl, { allowSimulatedLocal: true });
+      } catch (err) {
+        return reply.status(400).send({
+          error: 'SSRF_BLOCKED',
+          message:
+            err instanceof Error
+              ? err.message
+              : 'La URL de Chatwoot apunta a un destino no permitido.'
         });
       }
 
