@@ -441,4 +441,173 @@ describe('Functional, Logic, Validation & Edge-Case Audit Suite', () => {
 
     await app.close();
   });
+
+  it('reactivates Chatwoot AGENT_ACTIVE conversations on conversation_status_changed, pending status, or new conversation id', async () => {
+    const app = await buildApp();
+    const { ChatwootService } = await import('../modules/chatwoot/chatwoot.service.js');
+    const botId = `bot-cw-reactivate-${crypto.randomUUID().slice(0, 6)}`;
+    const flowId = `flow-cw-reactivate-${crypto.randomUUID().slice(0, 6)}`;
+    const now = new Date().toISOString();
+
+    runtimeStore.bots.push({
+      id: botId,
+      organizationId: '00000000-0000-4000-8000-000000000100',
+      name: 'Chatwoot Lifecycle Bot',
+      description: 'Lifecycle test',
+      phoneNumber: 'Chatwoot',
+      driver: 'CHATWOOT',
+      status: 'CONNECTED',
+      isActive: true,
+      activeFlowId: flowId,
+      activeFlowName: 'Saludo Lifecycle',
+      timezone: 'America/Bogota',
+      businessHoursEnabled: false,
+      outOfHoursMessage: 'Cerrado',
+      inactivityTimeoutMinutes: 15,
+      inactivityCloseMessage: 'Fin',
+      typingDelayMs: 0,
+      rateLimitPerMinute: 30,
+      messagesToday: 0,
+      activeConversations: 0,
+      handoffRate: 0,
+      qrCodeData: null,
+      qrExpiresAt: null,
+      lastConnectedAt: now,
+      chatwootConfig: null,
+      cloudApiConfig: null,
+      businessHours: [],
+      quickReplies: [],
+      createdAt: now,
+      updatedAt: now
+    });
+
+    ChatwootService.saveConfig(botId, {
+      baseUrl: 'https://chatwoot.local',
+      accountId: 1,
+      inboxId: 1,
+      apiAccessToken: 'cw_token_lifecycle_123',
+      webhookToken: 'whsec_lifecycle_123',
+      handoffReturnCommand: '#bot',
+      isActive: true
+    });
+
+    runtimeStore.flows.push({
+      id: flowId,
+      organizationId: '00000000-0000-4000-8000-000000000100',
+      name: 'Saludo Lifecycle',
+      description: 'Test',
+      botId,
+      botName: 'Chatwoot Lifecycle Bot',
+      isMainMenu: true,
+      activeVersionNumber: 1,
+      draftVersion: {
+        id: 'fv-1',
+        versionNumber: 1,
+        status: 'DRAFT',
+        nodes: [
+          {
+            id: 't-1',
+            type: 'TRIGGER',
+            position: { x: 0, y: 0 },
+            data: { label: 'Inicio', triggerMode: 'FIRST_MESSAGE', keywords: ['hola'] }
+          },
+          {
+            id: 'm-1',
+            type: 'MESSAGE',
+            position: { x: 200, y: 0 },
+            data: { label: 'Bienvenida', messageText: 'Hola {{nombre}}, bienvenido de nuevo.' }
+          }
+        ],
+        edges: [{ id: 'e-1', source: 't-1', target: 'm-1' }],
+        publishedAt: null,
+        createdAt: now
+      },
+      publishedVersion: null,
+      versions: [],
+      createdAt: now,
+      updatedAt: now
+    });
+
+    runtimeStore.contacts.push({
+      id: 'contact-cw-life',
+      organizationId: '00000000-0000-4000-8000-000000000100',
+      name: 'Edward Test',
+      phoneNumber: '+18095550001',
+      email: null,
+      nationalId: null,
+      chatwootContactId: 490,
+      tags: [],
+      variables: { nombre: 'Edward Test', telefono: '+18095550001' },
+      conversationsCount: 1,
+      lastInteractionAt: now,
+      createdAt: now
+    });
+
+    runtimeStore.conversations.push({
+      id: 'conv-cw-life-49',
+      botId,
+      botName: 'Chatwoot Lifecycle Bot',
+      contactId: 'contact-cw-life',
+      contactName: 'Edward Test',
+      contactPhone: '+18095550001',
+      chatwootConversationId: 49,
+      status: 'AGENT_ACTIVE',
+      assignedAgentName: 'Agente Humano',
+      currentFlowName: 'Saludo Lifecycle',
+      currentNodeId: null,
+      collectedVariables: {},
+      tags: [],
+      handoffReason: 'Transferido ayer',
+      lastMessagePreview: 'Adios',
+      lastActivityAt: now,
+      messages: [],
+      executionTrace: []
+    });
+
+    const newConvRes = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/chatwoot/${botId}?token=whsec_lifecycle_123`,
+      payload: {
+        id: 90001,
+        event: 'message_created',
+        message_type: 'incoming',
+        content: 'hola',
+        conversation: { id: 51, status: 'open' },
+        sender: { id: 490, name: 'Edward Test', phone_number: '+18095550001', type: 'contact' }
+      }
+    });
+    expect(newConvRes.statusCode).toBe(200);
+    expect((newConvRes.json() as { action: string }).action).toBe('bot_flow_replied');
+
+    const pendingReactivateRes = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/chatwoot/${botId}?token=whsec_lifecycle_123`,
+      payload: {
+        id: 90002,
+        event: 'message_created',
+        message_type: 'incoming',
+        content: 'hola',
+        conversation: { id: 49, status: 'pending' },
+        sender: { id: 490, name: 'Edward Test', phone_number: '+18095550001', type: 'contact' }
+      }
+    });
+    expect(pendingReactivateRes.statusCode).toBe(200);
+    expect((pendingReactivateRes.json() as { action: string }).action).toBe('bot_flow_replied');
+
+    const conv49 = runtimeStore.conversations.find((c) => c.id === 'conv-cw-life-49')!;
+    conv49.status = 'AGENT_ACTIVE';
+    const statusChangeRes = await app.inject({
+      method: 'POST',
+      url: `/api/webhooks/chatwoot/${botId}?token=whsec_lifecycle_123`,
+      payload: {
+        event: 'conversation_status_changed',
+        id: 49,
+        status: 'resolved'
+      }
+    });
+    expect(statusChangeRes.statusCode).toBe(200);
+    expect((statusChangeRes.json() as { conversation: { status: string } }).conversation.status).toBe('RESOLVED');
+
+    await app.close();
+  });
 });

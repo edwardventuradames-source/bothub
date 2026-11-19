@@ -24,6 +24,7 @@ import { processIncomingChatwootCustomerMessage } from './chatwoot-inbound.js';
 export interface ChatwootWebhookPayload {
   id?: number;
   event?: string;
+  status?: string;
   message_type?: 'incoming' | 'outgoing' | 'activity' | 0 | 1 | 2;
   private?: boolean;
   content?: string;
@@ -282,6 +283,49 @@ export class ChatwootService {
 
     if (!bot) {
       throw new Error(`Bot "${botId}" no encontrado para procesar webhook de Chatwoot.`);
+    }
+
+    if (payload.event === 'conversation_status_changed') {
+      const targetConvId = payload.conversation?.id ?? payload.id;
+      const nextRawStatus = (
+        payload.conversation?.status ??
+        payload.status ??
+        ''
+      ).toLowerCase();
+      if (targetConvId) {
+        const conv = runtimeStore.conversations.find(
+          (item) =>
+            item.botId === bot.id && item.chatwootConversationId === targetConvId
+        );
+        if (conv) {
+          if (nextRawStatus === 'resolved') {
+            conv.status = 'RESOLVED';
+            conv.currentNodeId = null;
+          } else if (nextRawStatus === 'pending') {
+            conv.status = 'BOT_ACTIVE';
+            conv.assignedAgentName = null;
+            conv.handoffReason = null;
+            conv.currentNodeId = null;
+          } else if (nextRawStatus === 'open' && conv.status === 'BOT_ACTIVE') {
+            conv.status = 'PENDING_AGENT';
+          }
+          conv.lastActivityAt = new Date().toISOString();
+          runtimeStore.persistStateToDisk();
+          const contact = runtimeStore.contacts.find((c) => c.id === conv.contactId);
+          if (contact) {
+            void syncConversationStateToDb(contact, conv);
+          }
+          if (io) {
+            io.to(`org:${bot.organizationId}`).emit('conversation:updated', conv);
+          }
+          return {
+            accepted: true,
+            action: `conversation_status_${nextRawStatus || 'updated'}`,
+            conversation: conv
+          };
+        }
+      }
+      return { accepted: true, action: `ignored_event_${payload.event}` };
     }
 
     if (payload.event && payload.event !== 'message_created') {

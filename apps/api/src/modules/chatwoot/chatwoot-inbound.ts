@@ -164,7 +164,7 @@ export async function processIncomingChatwootCustomerMessage(
     (item) =>
       item.botId === bot.id &&
       (item.chatwootConversationId === chatwootConvId ||
-        item.contactId === contact.id)
+        (item.chatwootConversationId == null && item.contactId === contact.id))
   );
 
   if (!conversation) {
@@ -189,12 +189,21 @@ export async function processIncomingChatwootCustomerMessage(
       executionTrace: []
     };
     runtimeStore.conversations.unshift(conversation);
-  } else if (conversation.status === 'RESOLVED') {
-    conversation.status = 'BOT_ACTIVE';
-    conversation.assignedAgentName = null;
-    conversation.handoffReason = null;
-    conversation.currentNodeId = null;
-    contact.conversationsCount += 1;
+  } else {
+    conversation.chatwootConversationId = chatwootConvId;
+    const chatwootConvStatus = (payload.conversation?.status ?? '').toLowerCase();
+    if (
+      conversation.status === 'RESOLVED' ||
+      (chatwootConvStatus === 'pending' &&
+        (conversation.status === 'AGENT_ACTIVE' ||
+          conversation.status === 'PENDING_AGENT'))
+    ) {
+      conversation.status = 'BOT_ACTIVE';
+      conversation.assignedAgentName = null;
+      conversation.handoffReason = null;
+      conversation.currentNodeId = null;
+      contact.conversationsCount += 1;
+    }
   }
 
   conversation.messages.push({
