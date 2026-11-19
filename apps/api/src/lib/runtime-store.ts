@@ -246,9 +246,6 @@ class RuntimeStore {
     }
     const rawApiToken = decryptSecret(stored.encryptedApiAccessToken);
     const rawWebhookToken = decryptSecret(stored.encryptedWebhookToken);
-    const endpointWithToken = rawWebhookToken
-      ? `/api/webhooks/chatwoot/${botId}?token=${encodeURIComponent(rawWebhookToken)}`
-      : `/api/webhooks/chatwoot/${botId}`;
     return {
       baseUrl: stored.baseUrl,
       accountId: stored.accountId,
@@ -256,7 +253,7 @@ class RuntimeStore {
       hasApiAccessToken: rawApiToken.length > 0,
       maskedApiAccessToken: maskSecretValue(rawApiToken),
       webhookTokenPreview: maskSecretValue(rawWebhookToken),
-      webhookEndpointPath: endpointWithToken,
+      webhookEndpointPath: `/api/webhooks/chatwoot/${botId}`,
       handoffReturnCommand: stored.handoffReturnCommand,
       isActive: stored.isActive,
       lastSyncedAt: stored.lastSyncedAt

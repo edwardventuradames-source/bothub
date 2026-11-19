@@ -460,7 +460,18 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      const chatwootConfig = ChatwootService.saveConfig(bot.id, parsed.data);
+      let chatwootConfig;
+      try {
+        chatwootConfig = ChatwootService.saveConfig(bot.id, parsed.data);
+      } catch (err) {
+        return reply.status(400).send({
+          error: 'VALIDATION_ERROR',
+          message:
+            err instanceof Error
+              ? err.message
+              : 'Token de Chatwoot inválido.'
+        });
+      }
       if (bot.driver === 'CHATWOOT') {
         try {
           await ChatwootService.testConnection(bot.id, app.io);

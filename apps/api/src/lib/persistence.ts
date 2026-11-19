@@ -147,9 +147,7 @@ export async function hydrateStoreFromDatabase(target: {
           hasApiAccessToken: rawApi.length > 0,
           maskedApiAccessToken: maskSecretValue(rawApi),
           webhookTokenPreview: maskSecretValue(rawWh),
-          webhookEndpointPath: rawWh
-            ? `/api/webhooks/chatwoot/${dbBot.id}?token=${encodeURIComponent(rawWh)}`
-            : `/api/webhooks/chatwoot/${dbBot.id}`,
+          webhookEndpointPath: `/api/webhooks/chatwoot/${dbBot.id}`,
           handoffReturnCommand: cw.handoffReturnCommand,
           isActive: cw.isConnected,
           lastSyncedAt: cw.lastVerifiedAt ? cw.lastVerifiedAt.toISOString() : null

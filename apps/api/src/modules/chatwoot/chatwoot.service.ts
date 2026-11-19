@@ -5,7 +5,10 @@ import {
   ChatwootConfigInput,
   ConversationDto
 } from '@bothub/shared';
-import { verifySecretConstantTime } from '../../lib/crypto.js';
+import {
+  generateRandomOpaqueToken,
+  verifySecretConstantTime
+} from '../../lib/crypto.js';
 import { runtimeStore } from '../../lib/runtime-store.js';
 import {
   syncBotRecordToDb,
@@ -78,17 +81,32 @@ export function registerWhatsAppOutboundForwarder(
 export class ChatwootService {
   public static saveConfig(botId: string, input: ChatwootConfigInput) {
     const existingTokens = runtimeStore.getDecryptedChatwootTokens(botId);
+    const trimmedApiToken = input.apiAccessToken?.trim() ?? '';
+    const trimmedWebhookToken = input.webhookToken?.trim() ?? '';
+    const resolvedApiToken = trimmedApiToken || existingTokens?.apiAccessToken || '';
+    const resolvedWebhookToken =
+      trimmedWebhookToken ||
+      existingTokens?.webhookToken ||
+      `whsec_${generateRandomOpaqueToken(16)}`;
+
+    if (resolvedApiToken.length < 6) {
+      throw new Error('Token de acceso de Chatwoot inválido (mínimo 6 caracteres).');
+    }
+    if (resolvedWebhookToken.length < 6) {
+      throw new Error('Token de webhook de Chatwoot inválido (mínimo 6 caracteres).');
+    }
+
     const resolvedInput: ChatwootConfigInput = {
       ...input,
-      apiAccessToken:
-        input.apiAccessToken.trim() || existingTokens?.apiAccessToken || '',
-      webhookToken:
-        input.webhookToken.trim() ||
-        existingTokens?.webhookToken ||
-        `whsec_${botId.replace(/[^a-zA-Z0-9]/g, '')}_2026`
+      apiAccessToken: resolvedApiToken,
+      webhookToken: resolvedWebhookToken
     };
 
-    runtimeStore.saveChatwootConfigForBot(botId, resolvedInput);
+    runtimeStore.saveChatwootConfigForBot(botId, {
+      ...resolvedInput,
+      apiAccessToken: resolvedApiToken,
+      webhookToken: resolvedWebhookToken
+    });
     const dto = runtimeStore.getChatwootConfigDto(botId);
     const storedSecrets = runtimeStore.chatwootSecrets.get(botId);
     const bot = runtimeStore.bots.find((item) => item.id === botId);
@@ -223,22 +241,10 @@ export class ChatwootService {
       throw new Error('Token de webhook de Chatwoot ausente o no configurado.');
     }
 
-    if (providedToken) {
-      const isWebhookTokenValid = verifySecretConstantTime(
-        providedToken,
-        secrets.webhookToken
+    if (!providedToken || !verifySecretConstantTime(providedToken, secrets.webhookToken)) {
+      throw new Error(
+        'Token de webhook inválido o ausente (verificación en tiempo constante fallida).'
       );
-      const isApiTokenValid = verifySecretConstantTime(
-        providedToken,
-        secrets.apiAccessToken
-      );
-      if (!isWebhookTokenValid && !isApiTokenValid) {
-        throw new Error(
-          'Token de webhook inválido (verificación en tiempo constante fallida).'
-        );
-      }
-    } else if (payload.account?.id !== config.accountId) {
-      throw new Error('Token de webhook de Chatwoot ausente o no configurado.');
     }
 
     if (!bot) {

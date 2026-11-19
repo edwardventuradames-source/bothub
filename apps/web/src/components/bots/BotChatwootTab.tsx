@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { CheckCircle2, Copy, Wifi } from 'lucide-react';
+import { CheckCircle2, Copy, RefreshCw, Wifi } from 'lucide-react';
 import { BotDto } from '@bothub/shared';
 import { botsApi } from '../../lib/api.js';
 
@@ -7,6 +7,15 @@ interface BotChatwootTabProps {
   selectedBot: BotDto;
   onBotUpdated: (bot: BotDto) => void;
   onFeedback: (type: 'ok' | 'err', text: string) => void;
+}
+
+function generateClientWebhookSecret(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `whsec_${hex}`;
 }
 
 export function BotChatwootTab({
@@ -20,8 +29,8 @@ export function BotChatwootTab({
   const [cwApiToken, setCwApiToken] = useState('');
   const [cwWebhookToken, setCwWebhookToken] = useState('');
   const [cwReturnCommand, setCwReturnCommand] = useState('#bot');
-
-  const defaultWebhookSecret = `whsec_${selectedBot.id.replace(/[^a-zA-Z0-9]/g, '')}_2026`;
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
 
   useEffect(() => {
     if (selectedBot.chatwootConfig) {
@@ -29,32 +38,33 @@ export function BotChatwootTab({
       setCwAccountId(String(selectedBot.chatwootConfig.accountId));
       setCwInboxId(String(selectedBot.chatwootConfig.inboxId));
       setCwReturnCommand(selectedBot.chatwootConfig.handoffReturnCommand);
-      const tokenMatch =
-        selectedBot.chatwootConfig.webhookEndpointPath.split('?token=')[1];
-      setCwWebhookToken(
-        tokenMatch ? decodeURIComponent(tokenMatch) : defaultWebhookSecret
-      );
+      setCwApiToken('');
+      setCwWebhookToken('');
     } else {
       setCwBaseUrl('');
       setCwAccountId('1');
       setCwInboxId('1');
       setCwApiToken('');
       setCwReturnCommand('#bot');
-      setCwWebhookToken(defaultWebhookSecret);
+      setCwWebhookToken(generateClientWebhookSecret());
     }
-  }, [selectedBot.id, selectedBot.chatwootConfig, defaultWebhookSecret]);
+  }, [selectedBot.id, selectedBot.chatwootConfig]);
 
-  const effectiveWebhookToken = cwWebhookToken.trim() || defaultWebhookSecret;
   const currentOrigin =
-    typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
-  const fullChatwootWebhookUrl = `${currentOrigin}/api/webhooks/chatwoot/${selectedBot.id}?token=${encodeURIComponent(effectiveWebhookToken)}`;
+    typeof window !== 'undefined' ? window.location.origin : '';
+  const baseWebhookUrl = `${currentOrigin}/api/webhooks/chatwoot/${selectedBot.id}`;
+  const fullChatwootWebhookUrl = cwWebhookToken.trim()
+    ? `${baseWebhookUrl}?token=${encodeURIComponent(cwWebhookToken.trim())}`
+    : baseWebhookUrl;
 
   async function handleCopyChatwootWebhookUrl(): Promise<void> {
     try {
       await navigator.clipboard.writeText(fullChatwootWebhookUrl);
       onFeedback(
         'ok',
-        'URL de Webhook copiada al portapapeles. Pégala en el campo "URL de Webhook" de tu Bot en Chatwoot.'
+        cwWebhookToken.trim()
+          ? 'URL de Webhook con token copiada al portapapeles. Pégala en Chatwoot.'
+          : 'URL base de Webhook copiada. Configura la cabecera x-chatwoot-webhook-token o genera un nuevo token.'
       );
     } catch {
       onFeedback('ok', `Copia esta URL en Chatwoot: ${fullChatwootWebhookUrl}`);
@@ -63,23 +73,60 @@ export function BotChatwootTab({
 
   async function handleSaveChatwoot(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const { bot } = await botsApi.saveChatwoot(selectedBot.id, {
-      baseUrl: cwBaseUrl.trim(),
-      accountId: Number(cwAccountId) || 1,
-      inboxId: Number(cwInboxId) || 1,
-      apiAccessToken: cwApiToken.trim(),
-      webhookToken: effectiveWebhookToken,
-      handoffReturnCommand: cwReturnCommand.trim() || '#bot',
-      isActive: true
-    });
-    onBotUpdated(bot);
-    onFeedback(
-      'ok',
-      'Bot conectado con Chatwoot y credenciales cifradas con AES-256-GCM.'
-    );
+    if (isSaving) return;
+    const parsedAccountId = Number(cwAccountId);
+    const parsedInboxId = Number(cwInboxId);
+    if (!Number.isInteger(parsedAccountId) || parsedAccountId <= 0) {
+      onFeedback('err', 'Account ID debe ser un número entero positivo.');
+      return;
+    }
+    if (!Number.isInteger(parsedInboxId) || parsedInboxId <= 0) {
+      onFeedback('err', 'Inbox ID debe ser un número entero positivo.');
+      return;
+    }
+    if (!selectedBot.chatwootConfig?.hasApiAccessToken && cwApiToken.trim().length < 6) {
+      onFeedback('err', 'El Token de Acceso API de Chatwoot debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (cwApiToken.trim().length > 0 && cwApiToken.trim().length < 6) {
+      onFeedback('err', 'El nuevo Token de Acceso API debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (cwWebhookToken.trim().length > 0 && cwWebhookToken.trim().length < 6) {
+      onFeedback('err', 'El Token de Webhook debe tener al menos 6 caracteres.');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const { bot } = await botsApi.saveChatwoot(selectedBot.id, {
+        baseUrl: cwBaseUrl.trim(),
+        accountId: parsedAccountId,
+        inboxId: parsedInboxId,
+        apiAccessToken: cwApiToken.trim(),
+        webhookToken: cwWebhookToken.trim(),
+        handoffReturnCommand: cwReturnCommand.trim() || '#bot',
+        isActive: true
+      });
+      onBotUpdated(bot);
+      setCwApiToken('');
+      onFeedback(
+        'ok',
+        'Bot conectado con Chatwoot y credenciales cifradas con AES-256-GCM.'
+      );
+    } catch (err) {
+      onFeedback(
+        'err',
+        err instanceof Error ? err.message : 'Error guardando la configuración de Chatwoot.'
+      );
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   async function handleTestChatwoot(): Promise<void> {
+    if (isTesting) return;
+    setIsTesting(true);
     try {
       const res = await botsApi.testChatwoot(selectedBot.id);
       if (res.bot) {
@@ -99,6 +146,8 @@ export function BotChatwootTab({
           ? err.message
           : 'Guarda primero las credenciales de Chatwoot antes de probar.'
       );
+    } finally {
+      setIsTesting(false);
     }
   }
 
@@ -111,13 +160,13 @@ export function BotChatwootTab({
               URL de Webhook para pegar en tu Bot de Chatwoot (Editar bot → URL de Webhook)
             </span>
             <p className="mt-0.5 text-xs text-soft-muted">
-              Modo Solo Chatwoot (Agent Bot): Si tu canal ya está en Chatwoot, solo guarda esta pestaña y pega esta URL en la ventana &quot;Editar bot&quot; de Chatwoot.
+              Por seguridad, el secreto guardado no se reexpone en GET. Usa la cabecera <code>x-chatwoot-webhook-token</code> o genera un nuevo token para copiar la URL completa.
             </p>
           </div>
           <button
             type="button"
             onClick={() => void handleCopyChatwootWebhookUrl()}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-brand-gradient px-3.5 py-2 text-xs font-extrabold text-white shadow-brand-icon"
+            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-brand-gradient px-3.5 py-2 text-xs font-extrabold text-white shadow-brand-icon"
           >
             <Copy className="h-3.5 w-3.5" />
             <span>Copiar URL de Webhook</span>
@@ -153,7 +202,7 @@ export function BotChatwootTab({
               name="baseUrl"
               type="url"
               required
-              placeholder="https://chat.bytemv.com"
+              placeholder="https://chat.miempresa.com"
               value={cwBaseUrl}
               onChange={(e) => setCwBaseUrl(e.target.value)}
               className="w-full rounded-xl border border-soft-line bg-soft-card px-3.5 py-2 text-xs text-soft-ink"
@@ -171,8 +220,9 @@ export function BotChatwootTab({
               <input
                 id="cw-account-id"
                 name="accountId"
-                type="text"
-                inputMode="numeric"
+                type="number"
+                min={1}
+                step={1}
                 required
                 value={cwAccountId}
                 onChange={(e) => setCwAccountId(e.target.value)}
@@ -189,8 +239,9 @@ export function BotChatwootTab({
               <input
                 id="cw-inbox-id"
                 name="inboxId"
-                type="text"
-                inputMode="numeric"
+                type="number"
+                min={1}
+                step={1}
                 required
                 value={cwInboxId}
                 onChange={(e) => setCwInboxId(e.target.value)}
@@ -210,10 +261,11 @@ export function BotChatwootTab({
               id="cw-api-token"
               name="apiAccessToken"
               type="password"
+              minLength={selectedBot.chatwootConfig?.hasApiAccessToken ? undefined : 6}
               required={!selectedBot.chatwootConfig?.hasApiAccessToken}
               placeholder={
                 selectedBot.chatwootConfig?.hasApiAccessToken
-                  ? 'Token guardado (deja vacío o pega uno nuevo)'
+                  ? 'Token guardado (deja vacío para conservar el actual)'
                   : 'Pega el "Token de acceso" de tu Bot en Chatwoot'
               }
               value={cwApiToken}
@@ -229,17 +281,32 @@ export function BotChatwootTab({
               Handoff Bidireccional & Prevención de Loops
             </span>
             <div>
-              <label
-                htmlFor="cw-webhook-token"
-                className="mb-1 block text-xs font-bold text-soft-ink"
-              >
-                Token Secreto del Webhook (Incluido en la URL de arriba)
-              </label>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <label
+                  htmlFor="cw-webhook-token"
+                  className="block text-xs font-bold text-soft-ink"
+                >
+                  Token Secreto del Webhook
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setCwWebhookToken(generateClientWebhookSecret())}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-soft-blue hover:underline"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  <span>Rotar token</span>
+                </button>
+              </div>
               <input
                 id="cw-webhook-token"
                 name="webhookToken"
                 type="text"
-                required
+                required={!selectedBot.chatwootConfig}
+                placeholder={
+                  selectedBot.chatwootConfig
+                    ? `Token actual: ${selectedBot.chatwootConfig.webhookTokenPreview} (deja vacío para conservar)`
+                    : 'Token secreto CSPRNG'
+                }
                 value={cwWebhookToken}
                 onChange={(e) => setCwWebhookToken(e.target.value)}
                 className="w-full rounded-xl border border-soft-line bg-soft-card px-3.5 py-2 text-xs text-soft-ink"
@@ -256,6 +323,8 @@ export function BotChatwootTab({
                 id="cw-return-cmd"
                 name="handoffReturnCommand"
                 type="text"
+                minLength={2}
+                maxLength={40}
                 required
                 value={cwReturnCommand}
                 onChange={(e) => setCwReturnCommand(e.target.value)}
@@ -263,7 +332,7 @@ export function BotChatwootTab({
               />
             </div>
             {selectedBot.chatwootConfig ? (
-              <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#82d616]">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#4b830d] dark:text-[#82d616]">
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 <span>
                   Token cifrado activo: {selectedBot.chatwootConfig.maskedApiAccessToken}
@@ -275,17 +344,19 @@ export function BotChatwootTab({
           <div className="mt-4 flex flex-wrap gap-2.5">
             <button
               type="submit"
-              className="flex-1 rounded-xl bg-brand-gradient py-2.5 text-xs font-extrabold text-white shadow-brand-icon"
+              disabled={isSaving}
+              className="min-h-[42px] flex-1 rounded-xl bg-brand-gradient py-2.5 text-xs font-extrabold text-white shadow-brand-icon disabled:opacity-60"
             >
-              Guardar Configuración Chatwoot
+              {isSaving ? 'Guardando...' : 'Guardar Configuración Chatwoot'}
             </button>
             <button
               type="button"
+              disabled={isTesting}
               onClick={() => void handleTestChatwoot()}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-soft-line bg-soft-card px-4 py-2.5 text-xs font-extrabold text-soft-ink hover:border-soft-blue"
+              className="inline-flex min-h-[42px] items-center gap-1.5 rounded-xl border border-soft-line bg-soft-card px-4 py-2.5 text-xs font-extrabold text-soft-ink hover:border-soft-blue disabled:opacity-60"
             >
               <Wifi className="h-3.5 w-3.5 text-[#82d616]" />
-              <span>Probar Conexión</span>
+              <span>{isTesting ? 'Probando...' : 'Probar Conexión'}</span>
             </button>
           </div>
         </div>
