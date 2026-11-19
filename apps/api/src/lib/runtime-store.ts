@@ -46,6 +46,7 @@ export interface StoredCloudApiSecrets {
   wabaId: string;
   encryptedAccessToken: string;
   encryptedVerifyToken: string;
+  encryptedAppSecret?: string;
 }
 
 export interface StoredUserRecord extends OrganizationUserDto {
@@ -285,13 +286,21 @@ class RuntimeStore {
       wabaId: string;
       accessToken: string;
       verifyToken: string;
+      appSecret?: string;
     }
   ): void {
+    const existing = this.cloudApiSecrets.get(botId);
+    const trimmedAppSecret = input.appSecret?.trim();
+    const encryptedAppSecret = trimmedAppSecret
+      ? encryptSecret(trimmedAppSecret)
+      : existing?.encryptedAppSecret;
+
     this.cloudApiSecrets.set(botId, {
       phoneNumberId: input.phoneNumberId,
       wabaId: input.wabaId,
       encryptedAccessToken: encryptSecret(input.accessToken),
-      encryptedVerifyToken: encryptSecret(input.verifyToken)
+      encryptedVerifyToken: encryptSecret(input.verifyToken),
+      ...(encryptedAppSecret ? { encryptedAppSecret } : {})
     });
 
     const bot = this.bots.find((item) => item.id === botId);
@@ -313,6 +322,7 @@ class RuntimeStore {
       phoneNumberId: stored.phoneNumberId,
       wabaId: stored.wabaId,
       hasAccessToken: rawAccessToken.length > 0,
+      hasAppSecret: Boolean(stored.encryptedAppSecret),
       maskedAccessToken: maskSecretValue(rawAccessToken),
       verifyTokenPreview: maskSecretValue(rawVerifyToken),
       webhookPath: `/api/webhooks/whatsapp-cloud/${botId}`
@@ -325,6 +335,28 @@ class RuntimeStore {
       return null;
     }
     return decryptSecret(stored.encryptedVerifyToken);
+  }
+
+  public getDecryptedCloudApiCredentials(botId: string): {
+    phoneNumberId: string;
+    wabaId: string;
+    accessToken: string;
+    verifyToken: string;
+    appSecret: string | null;
+  } | null {
+    const stored = this.cloudApiSecrets.get(botId);
+    if (!stored) {
+      return null;
+    }
+    return {
+      phoneNumberId: stored.phoneNumberId,
+      wabaId: stored.wabaId,
+      accessToken: decryptSecret(stored.encryptedAccessToken),
+      verifyToken: decryptSecret(stored.encryptedVerifyToken),
+      appSecret: stored.encryptedAppSecret
+        ? decryptSecret(stored.encryptedAppSecret)
+        : null
+    };
   }
 
   public appendLog(entry: {
@@ -370,13 +402,21 @@ class RuntimeStore {
     return newKey;
   }
 
-  public getDashboardMetrics(): DashboardMetricsDto {
-    const activeBots = this.bots.filter((bot) => bot.status === 'CONNECTED').length;
-    const messagesToday = this.bots.reduce((sum, bot) => sum + bot.messagesToday, 0);
-    const activeConversations = this.conversations.filter(
+  public getDashboardMetrics(organizationId?: string): DashboardMetricsDto {
+    const scopedBots = organizationId
+      ? this.bots.filter((bot) => bot.organizationId === organizationId)
+      : this.bots;
+    const scopedBotIds = new Set(scopedBots.map((b) => b.id));
+    const scopedConversations = organizationId
+      ? this.conversations.filter((conv) => scopedBotIds.has(conv.botId))
+      : this.conversations;
+
+    const activeBots = scopedBots.filter((bot) => bot.status === 'CONNECTED').length;
+    const messagesToday = scopedBots.reduce((sum, bot) => sum + bot.messagesToday, 0);
+    const activeConversations = scopedConversations.filter(
       (conv) => conv.status !== 'RESOLVED'
     ).length;
-    const handoffCountToday = this.conversations.filter(
+    const handoffCountToday = scopedConversations.filter(
       (conv) => conv.status === 'PENDING_AGENT' || conv.status === 'AGENT_ACTIVE'
     ).length;
 
@@ -389,7 +429,7 @@ class RuntimeStore {
 
     return {
       activeBots,
-      totalBots: this.bots.length,
+      totalBots: scopedBots.length,
       messagesToday,
       activeConversations,
       handoffCountToday,

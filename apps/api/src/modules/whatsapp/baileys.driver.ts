@@ -1,25 +1,29 @@
 import crypto from 'node:crypto';
 import makeWASocket, {
   DisconnectReason,
+  proto,
   WASocket
 } from 'baileys';
 import QRCode from 'qrcode';
 import { Server as SocketIOServer } from 'socket.io';
-import { BotConnectionStatus } from '@bothub/shared';
-import { prisma } from '../../lib/prisma.js';
+import { BotConnectionStatus, FlowSimulationBotReply } from '@bothub/shared';
+import { runtimeStore } from '../../lib/runtime-store.js';
+import { syncBotRecordToDb } from '../../lib/persistence.js';
 import { logger } from '../../lib/logger.js';
+import { formatBotReplyForChatwoot } from '../chatwoot/chatwoot.client.js';
 import {
   clearAllEncryptedBotSessions,
+  hasPersistedBotSession,
   usePrismaEncryptedAuthState
 } from './baileys.auth-state.js';
+import { processInboundWhatsAppMessage } from './inbound-pipeline.js';
 import {
   OutboundWhatsAppMessage,
   WhatsAppProviderDriver,
   WhatsAppSessionRuntimeState
 } from './whatsapp.types.js';
 
-const QR_EXPIRATION_SECONDS = 45;
-const QR_FALLBACK_TIMEOUT_MS = 2200;
+const QR_EXPIRATION_SECONDS = 60;
 const BASE_RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 5;
 
@@ -28,8 +32,53 @@ interface ActiveBaileysSession {
   state: WhatsAppSessionRuntimeState;
   reconnectAttempts: number;
   reconnectTimer: NodeJS.Timeout | null;
-  qrFallbackTimer: NodeJS.Timeout | null;
   manualStop: boolean;
+}
+
+function extractIncomingTextFromMessage(message: proto.IMessage): string {
+  if (message.conversation) {
+    return message.conversation;
+  }
+  if (message.extendedTextMessage?.text) {
+    return message.extendedTextMessage.text;
+  }
+  if (message.buttonsResponseMessage) {
+    return (
+      message.buttonsResponseMessage.selectedButtonId ||
+      message.buttonsResponseMessage.selectedDisplayText ||
+      ''
+    );
+  }
+  if (message.listResponseMessage) {
+    return (
+      message.listResponseMessage.singleSelectReply?.selectedRowId ||
+      message.listResponseMessage.title ||
+      ''
+    );
+  }
+  if (message.templateButtonReplyMessage) {
+    return (
+      message.templateButtonReplyMessage.selectedId ||
+      message.templateButtonReplyMessage.selectedDisplayText ||
+      ''
+    );
+  }
+  if (message.imageMessage?.caption) {
+    return message.imageMessage.caption;
+  }
+  if (message.videoMessage?.caption) {
+    return message.videoMessage.caption;
+  }
+  if (message.documentMessage?.caption) {
+    return message.documentMessage.caption;
+  }
+  return '';
+}
+
+function formatPhoneFromJid(jid: string): string {
+  const userPart = jid.split('@')[0]?.split(':')[0] ?? '';
+  const digits = userPart.replace(/[^\d]/g, '');
+  return digits ? `+${digits}` : userPart;
 }
 
 export class BaileysDriver implements WhatsAppProviderDriver {
@@ -45,16 +94,24 @@ export class BaileysDriver implements WhatsAppProviderDriver {
     if (!this.io) {
       return;
     }
+
     const statusEvent = {
       botId: session.state.botId,
       status: session.state.status,
       phoneNumber: session.state.phoneNumber,
       driver: this.driverType,
       qrDataUrl: session.state.qrDataUrl,
+      qrCodeData: session.state.qrDataUrl,
+      qrExpiresAt: session.state.qrGeneratedAt
+        ? new Date(
+            new Date(session.state.qrGeneratedAt).getTime() + QR_EXPIRATION_SECONDS * 1000
+          ).toISOString()
+        : null,
       lastError: session.state.lastError,
       updatedAt: session.state.updatedAt
     };
 
+    this.io.emit('whatsapp:status', statusEvent);
     this.io.to(`bot:${session.state.botId}`).emit('whatsapp:status', statusEvent);
     this.io.to(`org:${session.state.organizationId}`).emit('whatsapp:status', statusEvent);
 
@@ -62,45 +119,63 @@ export class BaileysDriver implements WhatsAppProviderDriver {
       const qrEvent = {
         botId: session.state.botId,
         qrDataUrl: session.state.qrDataUrl,
+        qrCodeData: session.state.qrDataUrl,
         rawQr: session.state.rawQr,
         generatedAt: session.state.qrGeneratedAt ?? new Date().toISOString(),
         expiresInSeconds: QR_EXPIRATION_SECONDS
       };
+      this.io.emit('whatsapp:qr', qrEvent);
       this.io.to(`bot:${session.state.botId}`).emit('whatsapp:qr', qrEvent);
       this.io.to(`org:${session.state.organizationId}`).emit('whatsapp:qr', qrEvent);
     }
   }
 
-  private async syncDatabaseStatus(
+  private syncRuntimeAndDatabase(
     botId: string,
-    organizationId: string,
     status: BotConnectionStatus,
-    phoneNumber?: string | null,
-    eventLabel?: string,
-    eventMessage?: string
-  ): Promise<void> {
-    try {
-      await prisma.bot.updateMany({
-        where: { id: botId, organizationId },
-        data: {
-          status,
-          ...(phoneNumber !== undefined ? { phoneNumber } : {})
-        }
-      });
-
-      if (eventLabel && eventMessage) {
-        await prisma.botLog.create({
-          data: {
-            organizationId,
-            botId,
-            level: status === 'ERROR' ? 'ERROR' : 'INFO',
-            event: eventLabel,
-            message: eventMessage
-          }
-        });
+    patch: {
+      phoneNumber?: string | null;
+      qrCodeData?: string | null;
+      qrExpiresAt?: string | null;
+      lastConnectedAt?: string | null;
+      isActive?: boolean;
+    } = {},
+    logEvent?: { level: 'INFO' | 'WARN' | 'ERROR'; event: string; message: string }
+  ): void {
+    const bot = runtimeStore.bots.find((item) => item.id === botId);
+    if (bot) {
+      bot.status = status;
+      if (patch.phoneNumber !== undefined && patch.phoneNumber !== null) {
+        bot.phoneNumber = patch.phoneNumber;
       }
-    } catch (error) {
-      logger.warn({ botId, status, err: error }, 'Could not persist bot status update in DB');
+      if (patch.qrCodeData !== undefined) {
+        bot.qrCodeData = patch.qrCodeData;
+      }
+      if (patch.qrExpiresAt !== undefined) {
+        bot.qrExpiresAt = patch.qrExpiresAt;
+      }
+      if (patch.lastConnectedAt !== undefined) {
+        bot.lastConnectedAt = patch.lastConnectedAt;
+      }
+      if (patch.isActive !== undefined) {
+        bot.isActive = patch.isActive;
+      }
+      bot.updatedAt = new Date().toISOString();
+      runtimeStore.persistStateToDisk();
+      void syncBotRecordToDb(bot);
+    }
+
+    if (logEvent) {
+      const logEntry = runtimeStore.appendLog({
+        botId,
+        botName: bot?.name,
+        level: logEvent.level,
+        event: logEvent.event,
+        message: logEvent.message
+      });
+      if (this.io) {
+        this.io.emit('log:new', logEntry);
+      }
     }
   }
 
@@ -113,18 +188,18 @@ export class BaileysDriver implements WhatsAppProviderDriver {
       return existing;
     }
 
+    const bot = runtimeStore.bots.find((item) => item.id === botId);
     const created: ActiveBaileysSession = {
       socket: null,
       reconnectAttempts: 0,
       reconnectTimer: null,
-      qrFallbackTimer: null,
       manualStop: false,
       state: {
         botId,
         organizationId,
         driver: 'BAILEYS',
-        status: 'DISCONNECTED',
-        phoneNumber: null,
+        status: bot?.status ?? 'DISCONNECTED',
+        phoneNumber: bot?.phoneNumber ?? null,
         qrDataUrl: null,
         rawQr: null,
         qrGeneratedAt: null,
@@ -141,9 +216,16 @@ export class BaileysDriver implements WhatsAppProviderDriver {
       clearTimeout(entry.reconnectTimer);
       entry.reconnectTimer = null;
     }
-    if (entry.qrFallbackTimer) {
-      clearTimeout(entry.qrFallbackTimer);
-      entry.qrFallbackTimer = null;
+  }
+
+  private closeSocketSafely(entry: ActiveBaileysSession): void {
+    if (entry.socket) {
+      try {
+        entry.socket.end(undefined);
+      } catch {
+        void 0;
+      }
+      entry.socket = null;
     }
   }
 
@@ -161,6 +243,7 @@ export class BaileysDriver implements WhatsAppProviderDriver {
     });
 
     const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + QR_EXPIRATION_SECONDS * 1000).toISOString();
     entry.state = {
       ...entry.state,
       status: 'WAITING_QR',
@@ -171,15 +254,45 @@ export class BaileysDriver implements WhatsAppProviderDriver {
       updatedAt: nowIso
     };
 
-    this.emitRealtimeStatus(entry);
-    await this.syncDatabaseStatus(
+    this.syncRuntimeAndDatabase(
       entry.state.botId,
-      entry.state.organizationId,
       'WAITING_QR',
-      undefined,
-      'WHATSAPP_QR_GENERATED',
-      'Código QR generado y esperando escaneo desde WhatsApp.'
+      { qrCodeData: qrDataUrl, qrExpiresAt: expiresAt, isActive: true },
+      {
+        level: 'INFO',
+        event: 'whatsapp.baileys.qr_ready',
+        message: 'Código QR real de WhatsApp generado y esperando escaneo.'
+      }
     );
+    this.emitRealtimeStatus(entry);
+  }
+
+  private async sendReplyViaSocket(
+    sock: WASocket,
+    targetJid: string,
+    reply: FlowSimulationBotReply
+  ): Promise<void> {
+    const formattedText = formatBotReplyForChatwoot(reply);
+
+    if (reply.mediaUrl) {
+      const lowerUrl = reply.mediaUrl.toLowerCase();
+      if (lowerUrl.endsWith('.pdf') || lowerUrl.endsWith('.doc') || lowerUrl.endsWith('.docx')) {
+        await sock.sendMessage(targetJid, {
+          document: { url: reply.mediaUrl },
+          mimetype: 'application/pdf',
+          fileName: 'documento.pdf',
+          caption: formattedText
+        });
+        return;
+      }
+      await sock.sendMessage(targetJid, {
+        image: { url: reply.mediaUrl },
+        caption: formattedText
+      });
+      return;
+    }
+
+    await sock.sendMessage(targetJid, { text: formattedText });
   }
 
   public async connectSession(
@@ -188,13 +301,22 @@ export class BaileysDriver implements WhatsAppProviderDriver {
   ): Promise<WhatsAppSessionRuntimeState> {
     const entry = this.getOrCreateSessionEntry(botId, organizationId);
     this.clearTimers(entry);
+    this.closeSocketSafely(entry);
     entry.manualStop = false;
 
-    const syntheticQrSeed = `2@${crypto.randomBytes(24).toString('base64')},${crypto
-      .randomBytes(16)
-      .toString('base64')},${botId}`;
-
-    await this.assignQrToSession(entry, syntheticQrSeed);
+    entry.state = {
+      ...entry.state,
+      status: 'RECONNECTING',
+      qrDataUrl: null,
+      rawQr: null,
+      lastError: null,
+      updatedAt: new Date().toISOString()
+    };
+    this.syncRuntimeAndDatabase(botId, 'RECONNECTING', {
+      qrCodeData: null,
+      qrExpiresAt: null
+    });
+    this.emitRealtimeStatus(entry);
 
     try {
       const { state: authState, saveCreds } = await usePrismaEncryptedAuthState(botId);
@@ -203,7 +325,7 @@ export class BaileysDriver implements WhatsAppProviderDriver {
         auth: authState,
         printQRInTerminal: false,
         browser: ['BotHub Enterprise', 'Chrome', '1.0.0'],
-        connectTimeoutMs: 15000
+        connectTimeoutMs: 20000
       });
 
       entry.socket = sock;
@@ -220,11 +342,10 @@ export class BaileysDriver implements WhatsAppProviderDriver {
           this.clearTimers(entry);
           entry.reconnectAttempts = 0;
           const jidUser = sock.user?.id ?? '';
-          const resolvedPhone = jidUser.includes(':')
-            ? `+${jidUser.split(':')[0]}`
-            : jidUser.includes('@')
-              ? `+${jidUser.split('@')[0]}`
-              : entry.state.phoneNumber;
+          const resolvedPhone = jidUser
+            ? formatPhoneFromJid(jidUser)
+            : entry.state.phoneNumber;
+          const nowIso = new Date().toISOString();
 
           entry.state = {
             ...entry.state,
@@ -233,17 +354,26 @@ export class BaileysDriver implements WhatsAppProviderDriver {
             qrDataUrl: null,
             rawQr: null,
             lastError: null,
-            updatedAt: new Date().toISOString()
+            updatedAt: nowIso
           };
-          this.emitRealtimeStatus(entry);
-          await this.syncDatabaseStatus(
+
+          this.syncRuntimeAndDatabase(
             botId,
-            organizationId,
             'CONNECTED',
-            resolvedPhone,
-            'WHATSAPP_CONNECTED',
-            `Sesión Baileys vinculada exitosamente (${resolvedPhone ?? 'número activo'}).`
+            {
+              phoneNumber: resolvedPhone,
+              qrCodeData: null,
+              qrExpiresAt: null,
+              lastConnectedAt: nowIso,
+              isActive: true
+            },
+            {
+              level: 'INFO',
+              event: 'whatsapp.baileys.connected',
+              message: `Sesión Baileys vinculada exitosamente (${resolvedPhone ?? 'número activo'}).`
+            }
           );
+          this.emitRealtimeStatus(entry);
         }
 
         if (connection === 'close' && !entry.manualStop) {
@@ -260,24 +390,20 @@ export class BaileysDriver implements WhatsAppProviderDriver {
               status: 'DISCONNECTED',
               qrDataUrl: null,
               rawQr: null,
+              lastError: 'Sesión cerrada desde el dispositivo móvil.',
               updatedAt: new Date().toISOString()
             };
-            this.emitRealtimeStatus(entry);
-            await this.syncDatabaseStatus(
+            this.syncRuntimeAndDatabase(
               botId,
-              organizationId,
               'DISCONNECTED',
-              null,
-              'WHATSAPP_LOGGED_OUT',
-              'Sesión cerrada desde el dispositivo móvil.'
+              { qrCodeData: null, qrExpiresAt: null },
+              {
+                level: 'WARN',
+                event: 'whatsapp.baileys.logged_out',
+                message: 'Sesión Baileys cerrada desde el dispositivo móvil.'
+              }
             );
-            return;
-          }
-
-          if (
-            entry.state.status === 'WAITING_QR' &&
-            entry.state.qrDataUrl !== null
-          ) {
+            this.emitRealtimeStatus(entry);
             return;
           }
 
@@ -287,64 +413,126 @@ export class BaileysDriver implements WhatsAppProviderDriver {
             entry.state = {
               ...entry.state,
               status: 'RECONNECTING',
+              lastError: `Reconectando (intento ${entry.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`,
               updatedAt: new Date().toISOString()
             };
+            this.syncRuntimeAndDatabase(botId, 'RECONNECTING');
             this.emitRealtimeStatus(entry);
             entry.reconnectTimer = setTimeout(() => {
               void this.connectSession(botId, organizationId);
             }, delayMs);
+            return;
+          }
+
+          entry.state = {
+            ...entry.state,
+            status: 'ERROR',
+            qrDataUrl: null,
+            rawQr: null,
+            lastError: 'Se agotaron los reintentos de conexión con WhatsApp.',
+            updatedAt: new Date().toISOString()
+          };
+          this.syncRuntimeAndDatabase(
+            botId,
+            'ERROR',
+            { qrCodeData: null, qrExpiresAt: null },
+            {
+              level: 'ERROR',
+              event: 'whatsapp.baileys.connection_failed',
+              message: 'No fue posible establecer conexión con WhatsApp tras varios reintentos.'
+            }
+          );
+          this.emitRealtimeStatus(entry);
+        }
+      });
+
+      sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+
+        for (const msg of messages) {
+          if (!msg.message || msg.key.fromMe) continue;
+          const remoteJid = msg.key.remoteJid ?? '';
+          if (
+            !remoteJid ||
+            remoteJid.endsWith('@g.us') ||
+            remoteJid === 'status@broadcast'
+          ) {
+            continue;
+          }
+
+          const text = extractIncomingTextFromMessage(msg.message).trim();
+          if (!text) continue;
+
+          const fromPhone = formatPhoneFromJid(remoteJid);
+          const contactName = msg.pushName?.trim() || fromPhone;
+
+          try {
+            await processInboundWhatsAppMessage({
+              botId,
+              fromPhone,
+              contactName,
+              text,
+              io: this.io ?? undefined,
+              onTyping: async () => {
+                await sock.sendPresenceUpdate('composing', remoteJid).catch(() => undefined);
+              },
+              sendReply: async (reply) => {
+                await this.sendReplyViaSocket(sock, remoteJid, reply);
+              }
+            });
+          } catch (err) {
+            logger.error(
+              { botId, remoteJid, err },
+              'Error processing inbound Baileys message'
+            );
           }
         }
       });
     } catch (error) {
-      logger.warn(
-        { botId, err: error },
-        'Baileys live socket initialization fell back to interactive QR session mode'
+      const errorMessage =
+        error instanceof Error ? error.message : 'Error inicializando Baileys';
+      logger.error({ botId, err: error }, 'Baileys socket initialization failed');
+      entry.state = {
+        ...entry.state,
+        status: 'ERROR',
+        qrDataUrl: null,
+        rawQr: null,
+        lastError: errorMessage,
+        updatedAt: new Date().toISOString()
+      };
+      this.syncRuntimeAndDatabase(
+        botId,
+        'ERROR',
+        { qrCodeData: null, qrExpiresAt: null },
+        {
+          level: 'ERROR',
+          event: 'whatsapp.baileys.init_error',
+          message: `Error iniciando Baileys: ${errorMessage}`
+        }
       );
+      this.emitRealtimeStatus(entry);
     }
 
     return entry.state;
   }
 
+  public async restorePersistedSessions(): Promise<void> {
+    for (const bot of runtimeStore.bots) {
+      if (bot.driver === 'BAILEYS' && bot.isActive && bot.status !== 'PAUSED') {
+        const hasSession = await hasPersistedBotSession(bot.id);
+        if (hasSession) {
+          void this.connectSession(bot.id, bot.organizationId);
+        }
+      }
+    }
+  }
+
   public async simulatePairSuccess(
     botId: string,
     organizationId: string,
-    phoneNumber = '+58 412-5550199'
+    _phoneNumber?: string
   ): Promise<WhatsAppSessionRuntimeState> {
-    const entry = this.getOrCreateSessionEntry(botId, organizationId);
-    this.clearTimers(entry);
-    entry.manualStop = true;
-
-    if (entry.socket) {
-      try {
-        entry.socket.end(undefined);
-      } catch {
-        void 0;
-      }
-      entry.socket = null;
-    }
-
-    entry.state = {
-      ...entry.state,
-      status: 'CONNECTED',
-      phoneNumber,
-      qrDataUrl: null,
-      rawQr: null,
-      lastError: null,
-      updatedAt: new Date().toISOString()
-    };
-
-    this.emitRealtimeStatus(entry);
-    await this.syncDatabaseStatus(
-      botId,
-      organizationId,
-      'CONNECTED',
-      phoneNumber,
-      'WHATSAPP_CONNECTED',
-      `Sesión vinculada por escaneo QR (${phoneNumber}).`
-    );
-
-    return entry.state;
+    return this.getSessionState(botId, organizationId);
   }
 
   public async disconnectSession(
@@ -354,33 +542,28 @@ export class BaileysDriver implements WhatsAppProviderDriver {
     const entry = this.getOrCreateSessionEntry(botId, organizationId);
     entry.manualStop = true;
     this.clearTimers(entry);
-
-    if (entry.socket) {
-      try {
-        entry.socket.end(undefined);
-      } catch {
-        void 0;
-      }
-      entry.socket = null;
-    }
+    this.closeSocketSafely(entry);
 
     entry.state = {
       ...entry.state,
       status: 'DISCONNECTED',
       qrDataUrl: null,
       rawQr: null,
+      lastError: null,
       updatedAt: new Date().toISOString()
     };
 
-    this.emitRealtimeStatus(entry);
-    await this.syncDatabaseStatus(
+    this.syncRuntimeAndDatabase(
       botId,
-      organizationId,
       'DISCONNECTED',
-      undefined,
-      'WHATSAPP_DISCONNECTED',
-      'Sesión desconectada manualmente desde el panel BotHub.'
+      { qrCodeData: null, qrExpiresAt: null, isActive: false },
+      {
+        level: 'INFO',
+        event: 'whatsapp.baileys.disconnected',
+        message: 'Sesión Baileys desconectada manualmente.'
+      }
     );
+    this.emitRealtimeStatus(entry);
 
     return entry.state;
   }
@@ -403,25 +586,20 @@ export class BaileysDriver implements WhatsAppProviderDriver {
       return existing.state;
     }
 
-    try {
-      const botRecord = await prisma.bot.findFirst({
-        where: { id: botId, organizationId }
-      });
-      if (botRecord) {
-        const entry = this.getOrCreateSessionEntry(botId, organizationId);
-        entry.state = {
-          ...entry.state,
-          status: botRecord.status,
-          phoneNumber: botRecord.phoneNumber,
-          updatedAt: botRecord.updatedAt.toISOString()
-        };
-        return entry.state;
-      }
-    } catch {
-      void 0;
+    const bot = runtimeStore.bots.find(
+      (item) => item.id === botId && item.organizationId === organizationId
+    );
+    const entry = this.getOrCreateSessionEntry(botId, organizationId);
+    if (bot) {
+      entry.state = {
+        ...entry.state,
+        status: bot.status,
+        phoneNumber: bot.phoneNumber,
+        qrDataUrl: bot.qrCodeData,
+        updatedAt: bot.updatedAt
+      };
     }
-
-    return this.getOrCreateSessionEntry(botId, organizationId).state;
+    return entry.state;
   }
 
   public async sendTextMessage(
@@ -432,17 +610,15 @@ export class BaileysDriver implements WhatsAppProviderDriver {
     const normalizedDigits = payload.toPhoneNumber.replace(/[^\d]/g, '');
     const targetJid = `${normalizedDigits}@s.whatsapp.net`;
 
-    if (entry?.socket && entry.state.status === 'CONNECTED') {
-      const sent = await entry.socket.sendMessage(targetJid, {
-        text: payload.text
-      });
-      return {
-        externalMessageId: sent?.key?.id ?? `baileys-${crypto.randomUUID()}`
-      };
+    if (!entry?.socket || entry.state.status !== 'CONNECTED') {
+      throw new Error(`La sesión Baileys del bot "${botId}" no está conectada.`);
     }
 
+    const sent = await entry.socket.sendMessage(targetJid, {
+      text: payload.text
+    });
     return {
-      externalMessageId: `baileys-sim-${crypto.randomUUID()}`
+      externalMessageId: sent?.key?.id ?? `baileys-${crypto.randomUUID()}`
     };
   }
 }

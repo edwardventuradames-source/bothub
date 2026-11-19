@@ -56,7 +56,8 @@ export const CloudApiConfigInputSchema = z.object({
   phoneNumberId: z.string().min(4).max(64).trim(),
   wabaId: z.string().min(4).max(64).trim(),
   accessToken: z.string().min(8).trim(),
-  verifyToken: z.string().min(6).max(128).trim()
+  verifyToken: z.string().min(6).max(128).trim(),
+  appSecret: z.string().min(8).max(128).trim().optional().or(z.literal(''))
 });
 export type CloudApiConfigInput = z.infer<typeof CloudApiConfigInputSchema>;
 
@@ -74,6 +75,7 @@ export interface CloudApiConfigDto {
   phoneNumberId: string;
   wabaId: string;
   hasAccessToken: boolean;
+  hasAppSecret: boolean;
   maskedAccessToken: string;
   verifyTokenPreview: string;
   webhookPath: string;

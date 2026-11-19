@@ -1,7 +1,11 @@
 import { Server as SocketIOServer } from 'socket.io';
 import { CloudApiCredentialsInput, WhatsAppDriverType } from '@bothub/shared';
+import { registerWhatsAppOutboundForwarder } from '../chatwoot/chatwoot.service.js';
 import { BaileysDriver } from './baileys.driver.js';
-import { CloudApiDriver } from './cloud-api.driver.js';
+import {
+  CloudApiDriver,
+  ParsedCloudWebhookMessage
+} from './cloud-api.driver.js';
 import {
   OutboundWhatsAppMessage,
   WhatsAppProviderDriver,
@@ -12,9 +16,24 @@ export class WhatsAppProvider {
   private readonly baileysDriver = new BaileysDriver();
   private readonly cloudApiDriver = new CloudApiDriver();
 
+  constructor() {
+    registerWhatsAppOutboundForwarder(async ({ botId, toPhoneNumber, text }) => {
+      const { runtimeStore } = await import('../../lib/runtime-store.js');
+      const bot = runtimeStore.bots.find((item) => item.id === botId);
+      if (!bot || (bot.driver !== 'BAILEYS' && bot.driver !== 'CLOUD_API')) {
+        return;
+      }
+      await this.sendMessage(botId, bot.driver, { toPhoneNumber, text });
+    });
+  }
+
   public bindSocketServer(io: SocketIOServer): void {
     this.baileysDriver.bindSocketServer(io);
     this.cloudApiDriver.bindSocketServer(io);
+  }
+
+  public async restorePersistedSessions(): Promise<void> {
+    await this.baileysDriver.restorePersistedSessions();
   }
 
   public resolveDriver(driverType: WhatsAppDriverType): WhatsAppProviderDriver {
@@ -45,19 +64,6 @@ export class WhatsAppProvider {
     return this.resolveDriver(driverType).resetSession(botId, organizationId);
   }
 
-  public async simulateQrPairing(
-    botId: string,
-    organizationId: string,
-    driverType: WhatsAppDriverType,
-    phoneNumber?: string
-  ): Promise<WhatsAppSessionRuntimeState> {
-    return this.resolveDriver(driverType).simulatePairSuccess(
-      botId,
-      organizationId,
-      phoneNumber
-    );
-  }
-
   public async getBotSessionState(
     botId: string,
     organizationId: string,
@@ -76,6 +82,44 @@ export class WhatsAppProvider {
       organizationId,
       credentials
     );
+  }
+
+  public verifyCloudWebhookSubscription(
+    botId: string,
+    mode: string | undefined,
+    verifyToken: string | undefined,
+    challenge: string | undefined
+  ) {
+    return this.cloudApiDriver.verifyWebhookSubscription(
+      botId,
+      mode,
+      verifyToken,
+      challenge
+    );
+  }
+
+  public verifyCloudWebhookSignature(
+    botId: string,
+    rawBody: string | Buffer,
+    signatureHeader: string | undefined
+  ) {
+    return this.cloudApiDriver.verifyWebhookSignature(
+      botId,
+      rawBody,
+      signatureHeader
+    );
+  }
+
+  public parseCloudWebhookPayload(body: unknown) {
+    return this.cloudApiDriver.parseMetaWebhookPayload(body);
+  }
+
+  public async handleCloudWebhookMessage(
+    botId: string,
+    input: ParsedCloudWebhookMessage,
+    io?: SocketIOServer
+  ) {
+    return this.cloudApiDriver.handleIncomingMessage(botId, input, io);
   }
 
   public async sendMessage(

@@ -196,10 +196,6 @@ export const botsApi = {
     performRequest<{ bot: BotDto }>(`/bots/${id}/qr/generate`, {
       method: 'POST'
     }),
-  confirmQr: (id: string) =>
-    performRequest<{ bot: BotDto }>(`/bots/${id}/qr/confirm`, {
-      method: 'POST'
-    }),
   disconnect: (id: string) =>
     performRequest<{ bot: BotDto }>(`/bots/${id}/disconnect`, {
       method: 'POST'

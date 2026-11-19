@@ -12,8 +12,10 @@ import {
   maskSecretValue,
   runtimeStore
 } from '../../lib/runtime-store.js';
+import { syncConversationStateToDb } from '../../lib/persistence.js';
 import { ChatwootService, ChatwootWebhookPayload } from '../chatwoot/chatwoot.service.js';
-import { CloudApiDriver } from '../whatsapp/whatsapp.driver.js';
+import { whatsappProvider } from '../whatsapp/whatsapp.provider.js';
+import { BotNotFoundError } from '../whatsapp/inbound-pipeline.js';
 
 export async function registerPlatformRoutes(app: FastifyInstance): Promise<void> {
   app.get(
@@ -25,11 +27,18 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         summary: 'Métricas en tiempo real del Dashboard Soft UI'
       }
     },
-    async () => ({
-      metrics: runtimeStore.getDashboardMetrics(),
-      bots: runtimeStore.bots,
-      recentLogs: runtimeStore.logs.slice(0, 8)
-    })
+    async (request) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const orgBots = runtimeStore.bots.filter((b) => b.organizationId === orgId);
+      const orgBotIds = new Set(orgBots.map((b) => b.id));
+      return {
+        metrics: runtimeStore.getDashboardMetrics(orgId),
+        bots: orgBots,
+        recentLogs: runtimeStore.logs
+          .filter((l) => !l.botId || orgBotIds.has(l.botId))
+          .slice(0, 8)
+      };
+    }
   );
 
   app.get<{ Querystring: { status?: string; botId?: string } }>(
@@ -42,8 +51,15 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
     },
     async (request) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const orgBotIds = new Set(
+        runtimeStore.bots.filter((b) => b.organizationId === orgId).map((b) => b.id)
+      );
       const { status, botId } = request.query;
       const filtered = runtimeStore.conversations.filter((conv) => {
+        if (!orgBotIds.has(conv.botId)) {
+          return false;
+        }
         if (status && status !== 'ALL' && conv.status !== status) {
           return false;
         }
@@ -69,8 +85,12 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
     },
     async (request, reply) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const orgBotIds = new Set(
+        runtimeStore.bots.filter((b) => b.organizationId === orgId).map((b) => b.id)
+      );
       const conversation = runtimeStore.conversations.find(
-        (item) => item.id === request.params.id
+        (item) => item.id === request.params.id && orgBotIds.has(item.botId)
       );
       if (!conversation) {
         return reply.status(404).send({
@@ -83,6 +103,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         conversation.status = 'BOT_ACTIVE';
         conversation.assignedAgentName = null;
         conversation.handoffReason = null;
+        conversation.currentNodeId = null;
         conversation.messages.push({
           id: `msg-${crypto.randomUUID().slice(0, 8)}`,
           senderType: 'SYSTEM',
@@ -104,6 +125,11 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
 
       conversation.lastActivityAt = new Date().toISOString();
+      runtimeStore.persistStateToDisk();
+      const contact = runtimeStore.contacts.find((c) => c.id === conversation.contactId);
+      if (contact) {
+        void syncConversationStateToDb(contact, conversation);
+      }
       return { conversation };
     }
   );
@@ -117,9 +143,12 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         summary: 'Listar contactos y variables dinámicas capturadas'
       }
     },
-    async () => ({
-      contacts: runtimeStore.contacts
-    })
+    async (request) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      return {
+        contacts: runtimeStore.contacts.filter((c) => c.organizationId === orgId)
+      };
+    }
   );
 
   app.put<{
@@ -135,7 +164,10 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
     },
     async (request, reply) => {
-      const contact = runtimeStore.contacts.find((c) => c.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const contact = runtimeStore.contacts.find(
+        (c) => c.id === request.params.id && c.organizationId === orgId
+      );
       if (!contact) {
         return reply.status(404).send({
           error: 'CONTACT_NOT_FOUND',
@@ -149,6 +181,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         contact.variables = { ...contact.variables, ...request.body.variables };
       }
       contact.lastInteractionAt = new Date().toISOString();
+      runtimeStore.persistStateToDisk();
       return { contact };
     }
   );
@@ -163,8 +196,15 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
     },
     async (request) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const orgBotIds = new Set(
+        runtimeStore.bots.filter((b) => b.organizationId === orgId).map((b) => b.id)
+      );
       const { level, botId } = request.query;
       const logs = runtimeStore.logs.filter((entry) => {
+        if (entry.botId && !orgBotIds.has(entry.botId)) {
+          return false;
+        }
         if (level && level !== 'ALL' && entry.level !== level) {
           return false;
         }
@@ -186,9 +226,14 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         summary: 'Listar usuarios y roles RBAC de la organización'
       }
     },
-    async () => ({
-      users: runtimeStore.users.map(({ passwordHash: _ignored, ...publicUser }) => publicUser)
-    })
+    async (request) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      return {
+        users: runtimeStore.users
+          .filter((u) => u.organizationId === orgId)
+          .map(({ passwordHash: _ignored, ...publicUser }) => publicUser)
+      };
+    }
   );
 
   app.post(
@@ -235,6 +280,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       };
 
       runtimeStore.users.push(newUser);
+      runtimeStore.persistUsersToDisk();
       const { passwordHash: _ignored, ...publicUser } = newUser;
       return reply.status(201).send({ user: publicUser });
     }
@@ -250,7 +296,10 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
     },
     async (request, reply) => {
-      const user = runtimeStore.users.find((u) => u.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const user = runtimeStore.users.find(
+        (u) => u.id === request.params.id && u.organizationId === orgId
+      );
       if (!user) {
         return reply.status(404).send({
           error: 'USER_NOT_FOUND',
@@ -269,6 +318,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       if (parsed.data.name !== undefined) user.name = parsed.data.name;
       if (parsed.data.role !== undefined) user.role = parsed.data.role;
       if (parsed.data.isActive !== undefined) user.isActive = parsed.data.isActive;
+      runtimeStore.persistUsersToDisk();
 
       const { passwordHash: _ignored, ...publicUser } = user;
       return { user: publicUser };
@@ -325,6 +375,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       runtimeStore.apiKeys = runtimeStore.apiKeys.filter(
         (k) => k.id !== request.params.id
       );
+      runtimeStore.persistStateToDisk();
       return { success: true };
     }
   );
@@ -357,6 +408,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         createdAt: new Date().toISOString()
       };
       runtimeStore.outboundWebhooks.unshift(webhook);
+      runtimeStore.persistStateToDisk();
       return reply.status(201).send({ webhook });
     }
   );
@@ -386,9 +438,11 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         );
         return result;
       } catch (err) {
-        return reply.status(401).send({
-          error: 'WEBHOOK_UNAUTHORIZED',
-          message: err instanceof Error ? err.message : 'Error validando webhook.'
+        const message = err instanceof Error ? err.message : 'Error validando webhook.';
+        const statusCode = message.includes('no encontrado') ? 404 : 401;
+        return reply.status(statusCode).send({
+          error: statusCode === 404 ? 'BOT_NOT_FOUND' : 'WEBHOOK_UNAUTHORIZED',
+          message
         });
       }
     }
@@ -410,7 +464,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
     },
     async (request, reply) => {
-      const result = CloudApiDriver.verifyWebhookSubscription(
+      const result = whatsappProvider.verifyCloudWebhookSubscription(
         request.params.botId,
         request.query['hub.mode'],
         request.query['hub.verify_token'],
@@ -428,25 +482,82 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
 
   app.post<{
     Params: { botId: string };
-    Body: { fromPhone?: string; contactName?: string; text?: string };
+    Headers: { 'x-hub-signature-256'?: string };
+    Body: unknown;
   }>(
     '/webhooks/whatsapp-cloud/:botId',
     {
       schema: {
         tags: ['Webhooks'],
-        summary: 'Recepción de mensajes entrantes de WhatsApp Cloud API'
+        summary: 'Recepción verificada de mensajes entrantes de WhatsApp Cloud API (Meta)'
       }
     },
-    async (request) => {
-      const fromPhone = request.body?.fromPhone ?? '+57 300 999 8877';
-      const contactName = request.body?.contactName ?? 'Cliente WhatsApp Cloud';
-      const text = request.body?.text ?? 'hola';
+    async (request, reply) => {
+      const { botId } = request.params;
+      const bot = runtimeStore.bots.find((item) => item.id === botId);
+      if (!bot) {
+        return reply.status(404).send({
+          error: 'BOT_NOT_FOUND',
+          message: 'Bot no encontrado para este webhook.'
+        });
+      }
 
-      return CloudApiDriver.handleIncomingWhatsAppMessage(
-        request.params.botId,
-        { fromPhone, contactName, text },
-        app.io
+      const rawBody = request.rawBody ?? Buffer.from(JSON.stringify(request.body ?? {}));
+      const signature = request.headers['x-hub-signature-256'];
+      const sigValidation = whatsappProvider.verifyCloudWebhookSignature(
+        botId,
+        rawBody,
+        signature
       );
+      if (!sigValidation.valid) {
+        return reply.status(401).send({
+          error: 'CLOUD_SIGNATURE_INVALID',
+          message: `Firma del webhook inválida (${sigValidation.reason ?? 'unauthorized'}).`
+        });
+      }
+
+      const parsed = whatsappProvider.parseCloudWebhookPayload(request.body);
+      if (!parsed.validStructure) {
+        return reply.status(400).send({
+          error: 'INVALID_WEBHOOK_PAYLOAD',
+          message: 'El payload no cumple la estructura oficial de WhatsApp Cloud API (Meta).'
+        });
+      }
+
+      if (parsed.isStatusOnly) {
+        return {
+          accepted: true,
+          action: 'status_update_ignored'
+        };
+      }
+
+      const results = [];
+      for (const msg of parsed.messages) {
+        try {
+          const res = await whatsappProvider.handleCloudWebhookMessage(
+            botId,
+            msg,
+            app.io
+          );
+          results.push(res);
+        } catch (err) {
+          if (err instanceof BotNotFoundError) {
+            return reply.status(404).send({
+              error: 'BOT_NOT_FOUND',
+              message: err.message
+            });
+          }
+          throw err;
+        }
+      }
+
+      return {
+        accepted: true,
+        action: results[0]?.action ?? 'processed',
+        processedCount: results.length,
+        conversation: results[0]?.conversation,
+        simulation: results[0]?.simulation
+      };
     }
   );
 }

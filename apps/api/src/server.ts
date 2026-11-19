@@ -1,10 +1,19 @@
 import { buildApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
+import {
+  hydrateStoreFromDatabase,
+  initializeRedisIfConfigured
+} from './lib/persistence.js';
+import { runtimeStore } from './lib/runtime-store.js';
 import { attachSocketServer } from './plugins/socket.js';
 import { provisionAdminAccountFromServer } from './modules/auth/auth.service.js';
+import { whatsappProvider } from './modules/whatsapp/whatsapp.provider.js';
 
 async function startServer(): Promise<void> {
+  await initializeRedisIfConfigured();
+  await hydrateStoreFromDatabase(runtimeStore);
+
   const initialEmail = process.env.INITIAL_ADMIN_EMAIL?.trim();
   const initialPassword = process.env.INITIAL_ADMIN_PASSWORD;
   if (initialEmail && initialPassword && initialPassword.length >= 8) {
@@ -18,12 +27,15 @@ async function startServer(): Promise<void> {
   }
 
   const app = await buildApp();
-  attachSocketServer(app);
+  const io = attachSocketServer(app);
+  whatsappProvider.bindSocketServer(io);
 
   await app.listen({
     port: env.PORT,
     host: '0.0.0.0'
   });
+
+  await whatsappProvider.restorePersistedSessions();
 
   logger.info({ port: env.PORT }, 'BotHub API & Socket.IO server listening');
 }

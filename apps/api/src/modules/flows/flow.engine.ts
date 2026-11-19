@@ -1,18 +1,32 @@
 import crypto from 'node:crypto';
 import {
+  FlowDto,
   FlowEdge,
   FlowExecutionStepLog,
   FlowNode,
   FlowSimulationBotReply,
   FlowSimulationRequest,
   FlowSimulationResponse,
+  FlowVersionDto,
   QuestionValidationType
 } from '@bothub/shared';
+import { executeAiPromptNode, executeHttpRequestNode } from './flow.actions.js';
 
 const MAX_GRAPH_STEPS_PER_TURN = 15;
+const MAX_DELAY_SECONDS = 15;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const NATIONAL_ID_REGEX = /^\d{6,12}$/;
 const DATE_REGEX = /^(\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4})$/;
+const NUMERIC_PREFIX_REGEX = /^\d+[.)\-\s]+/;
+
+export interface FlowExecutionOptions {
+  isLiveExecution?: boolean;
+  onTyping?: (delayMs: number) => Promise<void>;
+}
+
+export function resolveActiveFlowGraph(flow: FlowDto): FlowVersionDto {
+  return flow.publishedVersion ?? flow.draftVersion;
+}
 
 export function interpolateFlowVariables(
   template: string,
@@ -100,7 +114,8 @@ function evaluateConditionNode(
 function findNextNodeId(
   edges: FlowEdge[],
   sourceNodeId: string,
-  preferredHandle?: string | null
+  preferredHandle?: string | null,
+  strictHandleMatch = false
 ): string | null {
   if (preferredHandle) {
     const matchedByHandle = edges.find(
@@ -109,16 +124,43 @@ function findNextNodeId(
     if (matchedByHandle) {
       return matchedByHandle.target;
     }
+    if (strictHandleMatch) {
+      const neutralEdge = edges.find(
+        (edge) => edge.source === sourceNodeId && !edge.sourceHandle
+      );
+      return neutralEdge ? neutralEdge.target : null;
+    }
   }
   const defaultEdge = edges.find((edge) => edge.source === sourceNodeId);
   return defaultEdge ? defaultEdge.target : null;
 }
 
-function resolveInteractiveSelectionHandle(
+function matchesInteractiveOption(
+  optionId: string,
+  optionLabel: string,
+  index: number,
+  normalizedInput: string
+): boolean {
+  const labelLower = optionLabel.trim().toLowerCase();
+  const labelWithoutPrefix = labelLower.replace(NUMERIC_PREFIX_REGEX, '').trim();
+  const numericIndex = String(index + 1);
+
+  return (
+    normalizedInput === optionId.trim().toLowerCase() ||
+    normalizedInput === numericIndex ||
+    normalizedInput === labelLower ||
+    (labelWithoutPrefix.length > 0 && normalizedInput === labelWithoutPrefix)
+  );
+}
+
+export function resolveInteractiveSelectionHandle(
   node: FlowNode,
   userInput: string
-): { handle: string | null; chosenLabel: string } {
+): { matched: boolean; handle: string | null; chosenLabel: string } {
   const normalizedInput = userInput.trim().toLowerCase();
+  if (!normalizedInput) {
+    return { matched: false, handle: null, chosenLabel: '' };
+  }
 
   if (node.type === 'BUTTONS') {
     const buttons = Array.isArray(node.data.buttons)
@@ -126,16 +168,11 @@ function resolveInteractiveSelectionHandle(
       : [];
     for (let idx = 0; idx < buttons.length; idx += 1) {
       const btn = buttons[idx];
-      const numericIndex = String(idx + 1);
-      if (
-        normalizedInput === btn.id.toLowerCase() ||
-        normalizedInput === numericIndex ||
-        normalizedInput === btn.label.toLowerCase() ||
-        btn.label.toLowerCase().includes(normalizedInput)
-      ) {
-        return { handle: btn.id, chosenLabel: btn.label };
+      if (matchesInteractiveOption(btn.id, btn.label, idx, normalizedInput)) {
+        return { matched: true, handle: btn.id, chosenLabel: btn.label };
       }
     }
+    return { matched: false, handle: null, chosenLabel: userInput.trim() };
   }
 
   if (node.type === 'LIST') {
@@ -144,26 +181,60 @@ function resolveInteractiveSelectionHandle(
       : [];
     for (let idx = 0; idx < items.length; idx += 1) {
       const item = items[idx];
-      const numericIndex = String(idx + 1);
-      if (
-        normalizedInput === item.id.toLowerCase() ||
-        normalizedInput === numericIndex ||
-        normalizedInput === item.title.toLowerCase() ||
-        item.title.toLowerCase().includes(normalizedInput)
-      ) {
-        return { handle: item.id, chosenLabel: item.title };
+      if (matchesInteractiveOption(item.id, item.title, idx, normalizedInput)) {
+        return { matched: true, handle: item.id, chosenLabel: item.title };
       }
     }
+    return { matched: false, handle: null, chosenLabel: userInput.trim() };
   }
 
-  return { handle: null, chosenLabel: userInput.trim() };
+  return { matched: false, handle: null, chosenLabel: userInput.trim() };
 }
 
-export function executeFlowSimulationStep(
+function evaluateTriggerMatch(node: FlowNode, inputMessage: string): boolean {
+  const matchMode = String(node.data.matchMode ?? 'FIRST_MESSAGE').toUpperCase();
+  if (matchMode === 'FIRST_MESSAGE' || matchMode === 'MAIN_MENU' || matchMode === 'OUT_OF_HOURS') {
+    return true;
+  }
+
+  const rawKeywords = String(node.data.keyword ?? '').trim();
+  if (!rawKeywords) {
+    return true;
+  }
+
+  const normalizedInput = inputMessage.trim().toLowerCase();
+  const candidates = rawKeywords
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (candidates.length === 0) {
+    return true;
+  }
+
+  switch (matchMode) {
+    case 'EXACT':
+      return candidates.some((kw) => normalizedInput === kw.toLowerCase());
+    case 'REGEX':
+      return candidates.some((pattern) => {
+        try {
+          return new RegExp(pattern, 'i').test(inputMessage.trim());
+        } catch {
+          return false;
+        }
+      });
+    case 'CONTAINS':
+    default:
+      return candidates.some((kw) => normalizedInput.includes(kw.toLowerCase()));
+  }
+}
+
+export async function executeFlowSimulationStep(
   nodes: FlowNode[],
   edges: FlowEdge[],
-  request: FlowSimulationRequest
-): FlowSimulationResponse {
+  request: FlowSimulationRequest,
+  options: FlowExecutionOptions = {}
+): Promise<FlowSimulationResponse> {
   const variables: Record<string, string> = {
     nombre: 'Cliente Demo',
     telefono: '+57 300 000 0000',
@@ -241,6 +312,47 @@ export function executeFlowSimulationStep(
         pendingNode,
         request.inputMessage
       );
+
+      if (!selection.matched) {
+        const retryButtons =
+          pendingNode.type === 'BUTTONS' && Array.isArray(pendingNode.data.buttons)
+            ? (pendingNode.data.buttons as Array<{ id: string; label: string }>)
+            : undefined;
+        const retryItems =
+          pendingNode.type === 'LIST' && Array.isArray(pendingNode.data.items)
+            ? (pendingNode.data.items as Array<{
+                id: string;
+                title: string;
+                description?: string;
+              }>)
+            : undefined;
+
+        replies.push({
+          id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+          text: '⚠️ Opción no reconocida. Por favor selecciona una de las opciones disponibles:',
+          buttons: retryButtons,
+          listItems: retryItems
+        });
+        trace.push({
+          nodeId: pendingNode.id,
+          nodeType: pendingNode.type,
+          title: String(pendingNode.data.title || 'Selección Interactiva'),
+          detail: `Opción inválida "${request.inputMessage}". Solicitando reintento.`,
+          timestamp: new Date().toISOString()
+        });
+        return {
+          replies,
+          nextNodeId: pendingNode.id,
+          awaitingQuestionNodeId: pendingNode.id,
+          variables,
+          tags,
+          handoffRequested: false,
+          handoffSummary: null,
+          completed: false,
+          trace
+        };
+      }
+
       variables.ultima_opcion = selection.chosenLabel;
       trace.push({
         nodeId: pendingNode.id,
@@ -249,29 +361,33 @@ export function executeFlowSimulationStep(
         detail: `Opción seleccionada: "${selection.chosenLabel}"`,
         timestamp: new Date().toISOString()
       });
-      const nextTargetId = findNextNodeId(edges, pendingNode.id, selection.handle);
+      const nextTargetId = findNextNodeId(edges, pendingNode.id, selection.handle, true);
       activeNode = findNode(nextTargetId);
     }
   }
 
-  if (!activeNode) {
+  if (!activeNode && !request.awaitingQuestionNodeId) {
     if (request.currentNodeId) {
       activeNode = findNode(request.currentNodeId);
     } else {
-      const triggerNode =
-        nodes.find((n) => n.type === 'TRIGGER') ?? nodes[0];
-      if (triggerNode) {
+      const triggerNodes = nodes.filter((n) => n.type === 'TRIGGER');
+      const matchedTrigger =
+        triggerNodes.find((n) => evaluateTriggerMatch(n, request.inputMessage)) ??
+        triggerNodes[0] ??
+        nodes[0];
+
+      if (matchedTrigger) {
         trace.push({
-          nodeId: triggerNode.id,
-          nodeType: triggerNode.type,
-          title: String(triggerNode.data.title || 'Disparador'),
+          nodeId: matchedTrigger.id,
+          nodeType: matchedTrigger.type,
+          title: String(matchedTrigger.data.title || 'Disparador'),
           detail: `Activado con mensaje "${request.inputMessage}"`,
           timestamp: new Date().toISOString()
         });
         const afterTriggerId =
-          triggerNode.type === 'TRIGGER'
-            ? findNextNodeId(edges, triggerNode.id)
-            : triggerNode.id;
+          matchedTrigger.type === 'TRIGGER'
+            ? findNextNodeId(edges, matchedTrigger.id)
+            : matchedTrigger.id;
         activeNode = findNode(afterTriggerId);
       }
     }
@@ -421,17 +537,29 @@ export function executeFlowSimulationStep(
           detail: `Evaluación condicional -> ${matched ? 'VERDADERO (true)' : 'FALSO (false)'}`,
           timestamp: new Date().toISOString()
         });
-        activeNode = findNode(findNextNodeId(edges, activeNode.id, branchHandle));
+        activeNode = findNode(findNextNodeId(edges, activeNode.id, branchHandle, true));
         break;
       }
 
       case 'DELAY': {
-        const delaySeconds = Number(activeNode.data.delaySeconds ?? 1);
+        const rawDelay = Number(activeNode.data.delaySeconds ?? 1);
+        const boundedSeconds = Number.isFinite(rawDelay)
+          ? Math.min(Math.max(rawDelay, 0), MAX_DELAY_SECONDS)
+          : 1;
+        const delayMs = Math.round(boundedSeconds * 1000);
+
+        if (options.isLiveExecution && delayMs > 0) {
+          if (options.onTyping) {
+            await options.onTyping(delayMs);
+          }
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+
         trace.push({
           nodeId: activeNode.id,
           nodeType: 'DELAY',
           title: nodeTitle,
-          detail: `Indicador "escribiendo..." durante ${delaySeconds}s`,
+          detail: `Indicador "escribiendo..." durante ${boundedSeconds}s`,
           timestamp: new Date().toISOString()
         });
         activeNode = findNode(findNextNodeId(edges, activeNode.id));
@@ -439,42 +567,78 @@ export function executeFlowSimulationStep(
       }
 
       case 'HTTP_REQUEST': {
-        const rawUrl = String(activeNode.data.url || 'https://api.bothub.local/v1/lookup');
-        const renderedUrl = interpolateFlowVariables(rawUrl, variables);
         const responseVar = String(activeNode.data.responseVariable || 'http_response');
-        const simulatedResult = `ORD-${(variables.cedula || '9941').slice(-4)} · En reparto activo (Verificado)`;
-        variables[responseVar] = simulatedResult;
+        const httpResult = await executeHttpRequestNode(activeNode, variables);
 
-        replies.push({
-          id: `reply-${crypto.randomUUID().slice(0, 8)}`,
-          text: `📦 Consulta externa completada: *${simulatedResult}*`
-        });
-        trace.push({
-          nodeId: activeNode.id,
-          nodeType: 'HTTP_REQUEST',
-          title: nodeTitle,
-          detail: `${String(activeNode.data.method || 'GET')} ${renderedUrl} -> Guardado en {{${responseVar}}}`,
-          timestamp: new Date().toISOString()
-        });
+        if (httpResult.ok) {
+          variables[responseVar] = httpResult.value;
+          delete variables[`${responseVar}_error`];
+          trace.push({
+            nodeId: activeNode.id,
+            nodeType: 'HTTP_REQUEST',
+            title: nodeTitle,
+            detail: `${httpResult.method} ${httpResult.renderedUrl} (${httpResult.statusCode}) -> {{${responseVar}}}`,
+            timestamp: new Date().toISOString()
+          });
+        } else {
+          variables[`${responseVar}_error`] = httpResult.errorMessage ?? 'Error HTTP';
+          trace.push({
+            nodeId: activeNode.id,
+            nodeType: 'HTTP_REQUEST',
+            title: nodeTitle,
+            detail: `Error ${httpResult.method} ${httpResult.renderedUrl}: ${httpResult.errorMessage}`,
+            timestamp: new Date().toISOString()
+          });
+        }
+
         activeNode = findNode(findNextNodeId(edges, activeNode.id));
         break;
       }
 
       case 'AI_PROMPT': {
         const saveVar = String(activeNode.data.saveToVariable || 'respuesta_ia');
-        const aiText = `🤖 *Asistente IA BotHub*: Hola ${variables.nombre}, según tu documento ${variables.cedula || 'registrado'} te recomendamos el **Plan Enterprise Multi-Sesión** con integración nativa a Chatwoot y cifrado AES-256-GCM.`;
-        variables[saveVar] = aiText;
-        replies.push({
-          id: `reply-${crypto.randomUUID().slice(0, 8)}`,
-          text: aiText
-        });
-        trace.push({
-          nodeId: activeNode.id,
-          nodeType: 'AI_PROMPT',
-          title: nodeTitle,
-          detail: `Respuesta generada con modelo ${String(activeNode.data.model || 'gpt-4o-mini')}`,
-          timestamp: new Date().toISOString()
-        });
+        const aiResult = await executeAiPromptNode(
+          activeNode,
+          variables,
+          request.inputMessage
+        );
+
+        if (aiResult.ok) {
+          variables[saveVar] = aiResult.text;
+          delete variables[`${saveVar}_error`];
+          replies.push({
+            id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+            text: aiResult.text
+          });
+          trace.push({
+            nodeId: activeNode.id,
+            nodeType: 'AI_PROMPT',
+            title: nodeTitle,
+            detail: `Respuesta generada con ${aiResult.model} -> {{${saveVar}}}`,
+            timestamp: new Date().toISOString()
+          });
+        } else {
+          variables[`${saveVar}_error`] = aiResult.errorMessage ?? 'Error IA';
+          const fallbackText =
+            typeof activeNode.data.fallbackMessage === 'string' &&
+            activeNode.data.fallbackMessage.trim().length > 0
+              ? interpolateFlowVariables(activeNode.data.fallbackMessage, variables)
+              : null;
+          if (fallbackText) {
+            replies.push({
+              id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+              text: fallbackText
+            });
+          }
+          trace.push({
+            nodeId: activeNode.id,
+            nodeType: 'AI_PROMPT',
+            title: nodeTitle,
+            detail: `Error IA (${aiResult.model}): ${aiResult.errorMessage}`,
+            timestamp: new Date().toISOString()
+          });
+        }
+
         activeNode = findNode(findNextNodeId(edges, activeNode.id));
         break;
       }

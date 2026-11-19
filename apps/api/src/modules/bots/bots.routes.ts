@@ -11,8 +11,9 @@ import {
   DEFAULT_ORG_ID,
   runtimeStore
 } from '../../lib/runtime-store.js';
+import { deleteBotFromDb, syncBotRecordToDb } from '../../lib/persistence.js';
 import { createDefaultBusinessHours } from '../../lib/runtime-seed-graphs.js';
-import { BaileysDriver, CloudApiDriver } from '../whatsapp/whatsapp.driver.js';
+import { whatsappProvider } from '../whatsapp/whatsapp.provider.js';
 import { ChatwootService } from '../chatwoot/chatwoot.service.js';
 
 export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
@@ -25,9 +26,12 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         summary: 'Listar bots con estado en vivo'
       }
     },
-    async () => ({
-      bots: runtimeStore.bots
-    })
+    async (request) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      return {
+        bots: runtimeStore.bots.filter((item) => item.organizationId === orgId)
+      };
+    }
   );
 
   app.get<{ Params: { id: string } }>(
@@ -40,7 +44,10 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
-      const bot = runtimeStore.bots.find((item) => item.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const bot = runtimeStore.bots.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
       if (!bot) {
         return reply.status(404).send({
           error: 'BOT_NOT_FOUND',
@@ -70,15 +77,18 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
       const data = parsed.data;
       const nowIso = new Date().toISOString();
       const matchedFlow = data.activeFlowId
-        ? runtimeStore.flows.find((f) => f.id === data.activeFlowId) ?? null
-        : runtimeStore.flows[0] ?? null;
+        ? runtimeStore.flows.find(
+            (f) => f.id === data.activeFlowId && f.organizationId === orgId
+          ) ?? null
+        : runtimeStore.flows.find((f) => f.organizationId === orgId) ?? null;
 
       const newBot: BotDto = {
         id: `bot-${crypto.randomUUID().slice(0, 8)}`,
-        organizationId: request.user.organizationId || DEFAULT_ORG_ID,
+        organizationId: orgId,
         name: data.name,
         description:
           data.description ||
@@ -87,9 +97,9 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
             : 'Bot de WhatsApp integrado con Chatwoot.'),
         phoneNumber:
           data.phoneNumber ||
-          (data.driver === 'CHATWOOT' ? 'Chatwoot Agent Bot' : '+57 300 000 0000'),
+          (data.driver === 'CHATWOOT' ? 'Chatwoot Agent Bot' : ''),
         driver: data.driver,
-        status: data.driver === 'BAILEYS' ? 'WAITING_QR' : 'DISCONNECTED',
+        status: 'DISCONNECTED',
         isActive: data.isActive,
         activeFlowId: matchedFlow?.id ?? null,
         activeFlowName: matchedFlow?.name ?? null,
@@ -105,14 +115,8 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         messagesToday: 0,
         activeConversations: 0,
         handoffRate: 0,
-        qrCodeData:
-          data.driver === 'BAILEYS'
-            ? `BOTHUB-WA-MD://2@${Date.now()}`
-            : null,
-        qrExpiresAt:
-          data.driver === 'BAILEYS'
-            ? new Date(Date.now() + 60_000).toISOString()
-            : null,
+        qrCodeData: null,
+        qrExpiresAt: null,
         lastConnectedAt: null,
         chatwootConfig: null,
         cloudApiConfig: null,
@@ -130,16 +134,20 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         event: 'bot.created',
         message: `Bot "${newBot.name}" creado con driver ${newBot.driver}.`
       });
+      void syncBotRecordToDb(newBot);
 
       return reply.status(201).send({ bot: newBot });
     }
   );
 
   const updateHandler = async (
-    request: { params: { id: string }; body: unknown },
+    request: { params: { id: string }; body: unknown; user?: { organizationId?: string } },
     reply: { status: (code: number) => { send: (payload: unknown) => unknown } }
   ) => {
-    const bot = runtimeStore.bots.find((item) => item.id === request.params.id);
+    const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+    const bot = runtimeStore.bots.find(
+      (item) => item.id === request.params.id && item.organizationId === orgId
+    );
     if (!bot) {
       return reply.status(404).send({
         error: 'BOT_NOT_FOUND',
@@ -181,7 +189,9 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     }
     if (patch.activeFlowId !== undefined) {
       const matchedFlow = patch.activeFlowId
-        ? runtimeStore.flows.find((f) => f.id === patch.activeFlowId) ?? null
+        ? runtimeStore.flows.find(
+            (f) => f.id === patch.activeFlowId && f.organizationId === orgId
+          ) ?? null
         : null;
       bot.activeFlowId = matchedFlow?.id ?? null;
       bot.activeFlowName = matchedFlow?.name ?? null;
@@ -202,6 +212,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
 
     bot.updatedAt = new Date().toISOString();
     runtimeStore.persistStateToDisk();
+    void syncBotRecordToDb(bot);
     return { bot };
   };
 
@@ -239,7 +250,10 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
-      const source = runtimeStore.bots.find((item) => item.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const source = runtimeStore.bots.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
       if (!source) {
         return reply.status(404).send({
           error: 'BOT_NOT_FOUND',
@@ -257,6 +271,8 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         activeConversations: 0,
         qrCodeData: null,
         qrExpiresAt: null,
+        chatwootConfig: null,
+        cloudApiConfig: null,
         createdAt: nowIso,
         updatedAt: nowIso
       };
@@ -269,16 +285,20 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         event: 'bot.duplicated',
         message: `Bot duplicado a partir de "${source.name}".`
       });
+      void syncBotRecordToDb(copy);
 
       return reply.status(201).send({ bot: copy });
     }
   );
 
   const togglePauseHandler = async (
-    request: { params: { id: string } },
+    request: { params: { id: string }; user?: { organizationId?: string } },
     reply: { status: (code: number) => { send: (payload: unknown) => unknown } }
   ) => {
-    const bot = runtimeStore.bots.find((item) => item.id === request.params.id);
+    const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+    const bot = runtimeStore.bots.find(
+      (item) => item.id === request.params.id && item.organizationId === orgId
+    );
     if (!bot) {
       return reply.status(404).send({
         error: 'BOT_NOT_FOUND',
@@ -286,9 +306,34 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    const nextStatus = bot.status === 'PAUSED' ? 'CONNECTED' : 'PAUSED';
-    const updated = BaileysDriver.setBotConnectionStatus(bot.id, nextStatus, app.io);
-    return { bot: updated };
+    const willPause = bot.status !== 'PAUSED';
+    bot.status = willPause ? 'PAUSED' : 'CONNECTED';
+    bot.isActive = !willPause;
+    bot.updatedAt = new Date().toISOString();
+    runtimeStore.persistStateToDisk();
+    void syncBotRecordToDb(bot);
+
+    if (bot.driver === 'BAILEYS') {
+      if (willPause) {
+        await whatsappProvider.disconnectBot(bot.id, bot.organizationId, 'BAILEYS');
+        bot.status = 'PAUSED';
+        bot.isActive = false;
+      } else {
+        await whatsappProvider.connectBot(bot.id, bot.organizationId, 'BAILEYS');
+      }
+    }
+
+    if (app.io) {
+      app.io.emit('whatsapp:status', {
+        botId: bot.id,
+        status: bot.status,
+        phoneNumber: bot.phoneNumber,
+        driver: bot.driver,
+        updatedAt: bot.updatedAt
+      });
+    }
+
+    return { bot };
   };
 
   app.post<{ Params: { id: string } }>(
@@ -321,41 +366,26 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
       schema: {
         tags: ['WhatsApp'],
-        summary: 'Generar nuevo código QR en vivo con Baileys'
+        summary: 'Iniciar sesión Baileys real y emitir código QR en vivo'
       }
     },
     async (request, reply) => {
-      try {
-        const bot = BaileysDriver.requestNewQrCode(request.params.id, app.io);
-        return { bot };
-      } catch (err) {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const bot = runtimeStore.bots.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
+      if (!bot) {
         return reply.status(404).send({
           error: 'BOT_NOT_FOUND',
-          message: err instanceof Error ? err.message : 'Bot no encontrado.'
+          message: 'Bot no encontrado.'
         });
       }
-    }
-  );
 
-  app.post<{ Params: { id: string } }>(
-    '/:id/qr/confirm',
-    {
-      preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
-      schema: {
-        tags: ['WhatsApp'],
-        summary: 'Vincular sesión QR de Baileys y cifrar credenciales con AES-256-GCM'
+      if (app.io) {
+        whatsappProvider.bindSocketServer(app.io);
       }
-    },
-    async (request, reply) => {
-      try {
-        const bot = BaileysDriver.completeQrPairing(request.params.id, app.io);
-        return { bot };
-      } catch (err) {
-        return reply.status(404).send({
-          error: 'BOT_NOT_FOUND',
-          message: err instanceof Error ? err.message : 'Bot no encontrado.'
-        });
-      }
+      await whatsappProvider.resetBotSession(bot.id, bot.organizationId, 'BAILEYS');
+      return { bot };
     }
   );
 
@@ -369,19 +399,22 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
-      try {
-        const bot = BaileysDriver.setBotConnectionStatus(
-          request.params.id,
-          'DISCONNECTED',
-          app.io
-        );
-        return { bot };
-      } catch (err) {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const bot = runtimeStore.bots.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
+      if (!bot) {
         return reply.status(404).send({
           error: 'BOT_NOT_FOUND',
-          message: err instanceof Error ? err.message : 'Bot no encontrado.'
+          message: 'Bot no encontrado.'
         });
       }
+
+      if (app.io) {
+        whatsappProvider.bindSocketServer(app.io);
+      }
+      await whatsappProvider.disconnectBot(bot.id, bot.organizationId, bot.driver);
+      return { bot };
     }
   );
 
@@ -395,6 +428,17 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const bot = runtimeStore.bots.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
+      if (!bot) {
+        return reply.status(404).send({
+          error: 'BOT_NOT_FOUND',
+          message: 'Bot no encontrado.'
+        });
+      }
+
       const parsed = ChatwootConfigInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -403,15 +447,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      const chatwootConfig = ChatwootService.saveConfig(request.params.id, parsed.data);
-      const bot = runtimeStore.bots.find((item) => item.id === request.params.id);
-      if (!bot) {
-        return reply.status(404).send({
-          error: 'BOT_NOT_FOUND',
-          message: 'Bot no encontrado.'
-        });
-      }
-
+      const chatwootConfig = ChatwootService.saveConfig(bot.id, parsed.data);
       return { chatwootConfig, bot };
     }
   );
@@ -422,12 +458,23 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
       schema: {
         tags: ['Chatwoot'],
-        summary: 'Probar conexión con el servidor e Inbox de Chatwoot'
+        summary: 'Probar conexión real con el servidor e Inbox de Chatwoot'
       }
     },
     async (request, reply) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const bot = runtimeStore.bots.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
+      if (!bot) {
+        return reply.status(404).send({
+          error: 'BOT_NOT_FOUND',
+          message: 'Bot no encontrado.'
+        });
+      }
+
       try {
-        return ChatwootService.testConnection(request.params.id);
+        return await ChatwootService.testConnection(bot.id);
       } catch (err) {
         return reply.status(400).send({
           error: 'CHATWOOT_TEST_FAILED',
@@ -450,6 +497,17 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const bot = runtimeStore.bots.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
+      if (!bot) {
+        return reply.status(404).send({
+          error: 'BOT_NOT_FOUND',
+          message: 'Bot no encontrado.'
+        });
+      }
+
       const parsed = CloudApiConfigInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -458,18 +516,18 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      try {
-        const bot = CloudApiDriver.configureOfficialCloudApi(
-          request.params.id,
-          parsed.data
-        );
-        return { bot };
-      } catch (err) {
-        return reply.status(404).send({
-          error: 'BOT_NOT_FOUND',
-          message: err instanceof Error ? err.message : 'Bot no encontrado.'
-        });
+      if (app.io) {
+        whatsappProvider.bindSocketServer(app.io);
       }
+
+      await whatsappProvider.saveCloudApiConfig(bot.id, bot.organizationId, {
+        phoneNumberId: parsed.data.phoneNumberId,
+        wabaId: parsed.data.wabaId,
+        accessToken: parsed.data.accessToken,
+        verifyToken: parsed.data.verifyToken,
+        appSecret: parsed.data.appSecret || undefined
+      });
+      return { bot };
     }
   );
 
@@ -483,7 +541,10 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
-      const idx = runtimeStore.bots.findIndex((item) => item.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const idx = runtimeStore.bots.findIndex(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
       if (idx === -1) {
         return reply.status(404).send({
           error: 'BOT_NOT_FOUND',
@@ -491,6 +552,8 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
       const [removed] = runtimeStore.bots.splice(idx, 1);
+      await whatsappProvider.disconnectBot(removed.id, removed.organizationId, removed.driver);
+      void deleteBotFromDb(removed.id);
       runtimeStore.appendLog({
         botId: null,
         level: 'WARN',

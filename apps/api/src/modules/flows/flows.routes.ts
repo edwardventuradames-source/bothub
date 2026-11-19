@@ -19,8 +19,10 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         summary: 'Listar todos los flujos conversacionales'
       }
     },
-    async () => ({
-      flows: runtimeStore.flows
+    async (request) => ({
+      flows: runtimeStore.flows.filter(
+        (item) => item.organizationId === (request.user?.organizationId ?? DEFAULT_ORG_ID)
+      )
     })
   );
 
@@ -34,7 +36,10 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
-      const flow = runtimeStore.flows.find((item) => item.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const flow = runtimeStore.flows.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
       if (!flow) {
         return reply.status(404).send({
           error: 'FLOW_NOT_FOUND',
@@ -64,10 +69,11 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
       const data = parsed.data;
       const nowIso = new Date().toISOString();
       const targetBot = data.botId
-        ? runtimeStore.bots.find((b) => b.id === data.botId)
+        ? runtimeStore.bots.find((b) => b.id === data.botId && b.organizationId === orgId)
         : null;
 
       const starterNodes = [
@@ -155,7 +161,10 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
-      const flow = runtimeStore.flows.find((item) => item.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const flow = runtimeStore.flows.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
       if (!flow) {
         return reply.status(404).send({
           error: 'FLOW_NOT_FOUND',
@@ -179,7 +188,9 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       if (data.description !== undefined) flow.description = data.description;
       if (data.botId !== undefined) {
         flow.botId = data.botId;
-        const matchedBot = runtimeStore.bots.find((b) => b.id === data.botId);
+        const matchedBot = runtimeStore.bots.find(
+          (b) => b.id === data.botId && b.organizationId === orgId
+        );
         flow.botName = matchedBot ? matchedBot.name : null;
         if (matchedBot) {
           matchedBot.activeFlowId = flow.id;
@@ -241,7 +252,10 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
-      const flow = runtimeStore.flows.find((item) => item.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const flow = runtimeStore.flows.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
       if (!flow) {
         return reply.status(404).send({
           error: 'FLOW_NOT_FOUND',
@@ -287,7 +301,10 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
-      const flow = runtimeStore.flows.find((item) => item.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const flow = runtimeStore.flows.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
       if (!flow) {
         return reply.status(404).send({
           error: 'FLOW_NOT_FOUND',
@@ -303,7 +320,7 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      const result = executeFlowSimulationStep(
+      const result = await executeFlowSimulationStep(
         flow.draftVersion.nodes,
         flow.draftVersion.edges,
         parsed.data
@@ -323,7 +340,10 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
     async (request, reply) => {
-      const idx = runtimeStore.flows.findIndex((f) => f.id === request.params.id);
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const idx = runtimeStore.flows.findIndex(
+        (f) => f.id === request.params.id && f.organizationId === orgId
+      );
       if (idx === -1) {
         return reply.status(404).send({
           error: 'FLOW_NOT_FOUND',
