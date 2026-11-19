@@ -75,6 +75,7 @@ export function App() {
                 <Route path="/" element={<DashboardPreviewPage />} />
                 <Route path="/bots" element={<BotsPage />} />
                 <Route path="/flows" element={<FlowsBuilderPage />} />
+                <Route path="/flows/:flowId" element={<FlowsBuilderPage />} />
                 <Route path="/conversations" element={<ConversationsPage />} />
                 <Route path="/contacts" element={<ContactsPage />} />
                 <Route path="/logs" element={<LogsConsolePage />} />

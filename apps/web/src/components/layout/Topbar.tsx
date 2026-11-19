@@ -15,7 +15,7 @@ interface TopbarProps {
 const ROUTE_TITLES: Record<string, string> = {
   '/': 'Dashboard',
   '/bots': 'Bots de WhatsApp',
-  '/flows': 'Editor Visual de Flujos',
+  '/flows': 'Flujos Conversacionales',
   '/conversations': 'Conversaciones & Trazabilidad',
   '/contacts': 'Directorio de Contactos',
   '/logs': 'Logs y Eventos en Tiempo Real',
@@ -37,7 +37,9 @@ export function Topbar({
   const [notifError, setNotifError] = useState<string | null>(null);
   const notifContainerRef = useRef<HTMLDivElement>(null);
 
-  const currentTitle = ROUTE_TITLES[location.pathname] ?? 'Dashboard';
+  const currentTitle = location.pathname.startsWith('/flows/')
+    ? 'Editor Visual de Flujos'
+    : (ROUTE_TITLES[location.pathname] ?? 'Dashboard');
 
   useEffect(() => {
     if (!notifOpen) return;

@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import {
   Connection,
   Edge,
@@ -11,13 +12,9 @@ import {
 } from '@xyflow/react';
 import {
   AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
-  GitBranch,
-  History,
-  Plus,
-  Rocket,
-  Save,
-  Trash2
+  GitBranch
 } from 'lucide-react';
 import {
   BotDto,
@@ -31,6 +28,8 @@ import { botsApi, flowsApi } from '../lib/api.js';
 import { useAuthStore } from '../store/auth.store.js';
 import { useThemeStore } from '../store/theme.store.js';
 import { FlowCanvasPanel, FlowPaletteSection } from '../components/flows/FlowCanvasPanel.js';
+import { FlowEditorHeader } from '../components/flows/FlowEditorHeader.js';
+import { FlowsCatalogView } from '../components/flows/FlowsCatalogView.js';
 import { FlowSimulatorPanel } from '../components/flows/FlowSimulatorPanel.js';
 import { FlowNodeInspector } from '../components/flows/FlowNodeInspector.js';
 import { CreateFlowDialog, DeleteFlowDialog } from '../components/flows/FlowDialogs.js';
@@ -44,8 +43,12 @@ import {
 } from '../components/flows/flow-palette.js';
 
 export function FlowsBuilderPage() {
+  const { flowId: routeFlowId } = useParams<{ flowId?: string }>();
+  const navigate = useNavigate();
+  const outletContext = useOutletContext<{ searchQuery?: string } | null>();
   const newFlowDialogRef = useRef<HTMLDialogElement | null>(null);
   const deleteFlowDialogRef = useRef<HTMLDialogElement | null>(null);
+  const loadedFlowIdRef = useRef<string | null>(null);
 
   const user = useAuthStore((s) => s.user);
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
@@ -53,7 +56,9 @@ export function FlowsBuilderPage() {
 
   const [flows, setFlows] = useState<FlowDto[]>([]);
   const [bots, setBots] = useState<BotDto[]>([]);
-  const [selectedFlowId, setSelectedFlowId] = useState<string>('');
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogBotFilter, setCatalogBotFilter] = useState('ALL');
+  const [deleteTargetFlow, setDeleteTargetFlow] = useState<FlowDto | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
@@ -75,10 +80,12 @@ export function FlowsBuilderPage() {
   const [nodes, setNodes, rawOnNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, rawOnEdgesChange] = useEdgesState<Edge>([]);
 
-  const activeFlow = useMemo(
-    () => flows.find((f) => f.id === selectedFlowId) ?? flows[0] ?? null,
-    [flows, selectedFlowId]
-  );
+  const effectiveCatalogSearch = catalogSearch || outletContext?.searchQuery || '';
+
+  const activeFlow = useMemo(() => {
+    if (!routeFlowId) return null;
+    return flows.find((f) => f.id === routeFlowId) ?? null;
+  }, [flows, routeFlowId]);
 
   const selectedNode = useMemo(
     () => nodes.find((n) => n.id === selectedNodeId) ?? null,
@@ -151,6 +158,18 @@ export function FlowsBuilderPage() {
     [rawOnEdgesChange]
   );
 
+  const applyFlowToCanvas = useCallback(
+    (target: FlowDto) => {
+      setNodes(mapFlowNodesToReactFlow(target.draftVersion.nodes, null));
+      setEdges(mapFlowEdgesToReactFlow(target.draftVersion.edges));
+      setSelectedNodeId(target.draftVersion.nodes[0]?.id ?? null);
+      setSelectedEdgeId(null);
+      setHighlightedNodeId(null);
+      setHasUnsavedChanges(false);
+    },
+    [setEdges, setNodes]
+  );
+
   useEffect(() => {
     async function loadInitial(): Promise<void> {
       setIsLoading(true);
@@ -161,15 +180,6 @@ export function FlowsBuilderPage() {
         ]);
         setFlows(flowsRes.flows);
         setBots(botsRes.bots);
-        if (flowsRes.flows[0]) {
-          const initialFlow = flowsRes.flows[0];
-          setSelectedFlowId(initialFlow.id);
-          setNodes(mapFlowNodesToReactFlow(initialFlow.draftVersion.nodes, null));
-          setEdges(mapFlowEdgesToReactFlow(initialFlow.draftVersion.edges));
-          setSelectedNodeId(initialFlow.draftVersion.nodes[0]?.id ?? null);
-          setSelectedEdgeId(null);
-          setHasUnsavedChanges(false);
-        }
       } catch (err) {
         setFeedback({
           type: 'err',
@@ -183,19 +193,24 @@ export function FlowsBuilderPage() {
       }
     }
     void loadInitial();
-  }, [setEdges, setNodes]);
+  }, []);
+
+  useEffect(() => {
+    if (!routeFlowId) {
+      loadedFlowIdRef.current = null;
+      return;
+    }
+    if (isLoading) return;
+    const target = flows.find((f) => f.id === routeFlowId);
+    if (target && loadedFlowIdRef.current !== target.id) {
+      loadedFlowIdRef.current = target.id;
+      applyFlowToCanvas(target);
+    }
+  }, [routeFlowId, flows, isLoading, applyFlowToCanvas]);
 
   function handleSelectFlow(flowId: string): void {
-    setSelectedFlowId(flowId);
-    setSelectedEdgeId(null);
-    const target = flows.find((f) => f.id === flowId);
-    if (target) {
-      setNodes(mapFlowNodesToReactFlow(target.draftVersion.nodes, null));
-      setEdges(mapFlowEdgesToReactFlow(target.draftVersion.edges));
-      setSelectedNodeId(target.draftVersion.nodes[0]?.id ?? null);
-      setHighlightedNodeId(null);
-      setHasUnsavedChanges(false);
-    }
+    if (!flowId) return;
+    navigate(`/flows/${flowId}`);
   }
 
   const onConnect = useCallback(
@@ -403,15 +418,11 @@ export function FlowsBuilderPage() {
       });
 
       setFlows((prev) => [flow, ...prev]);
-      setSelectedFlowId(flow.id);
-      setNodes(mapFlowNodesToReactFlow(flow.draftVersion.nodes, null));
-      setEdges(mapFlowEdgesToReactFlow(flow.draftVersion.edges));
-      setSelectedNodeId(flow.draftVersion.nodes[0]?.id ?? null);
-      setSelectedEdgeId(null);
-      setHasUnsavedChanges(false);
+      loadedFlowIdRef.current = null;
       setNewFlowName('');
       setNewFlowDesc('');
       newFlowDialogRef.current?.close();
+      navigate(`/flows/${flow.id}`);
       setFeedback({
         type: 'ok',
         text: `Nuevo flujo "${flow.name}" creado y listo para editar.`
@@ -426,28 +437,31 @@ export function FlowsBuilderPage() {
     }
   }
 
+  function requestDeleteFlow(flow: FlowDto): void {
+    setDeleteTargetFlow(flow);
+    deleteFlowDialogRef.current?.showModal();
+  }
+
   async function handleConfirmDeleteFlow(): Promise<void> {
-    if (!activeFlow || !canEditFlows || isSaving) return;
-    const deletedId = activeFlow.id;
+    const target = deleteTargetFlow ?? activeFlow;
+    if (!target || !canEditFlows || isSaving) return;
+    const deletedId = target.id;
     setIsSaving(true);
     try {
       await flowsApi.remove(deletedId);
       const remaining = flows.filter((f) => f.id !== deletedId);
       setFlows(remaining);
+      setDeleteTargetFlow(null);
       deleteFlowDialogRef.current?.close();
-      if (remaining[0]) {
-        setSelectedFlowId(remaining[0].id);
-        setNodes(mapFlowNodesToReactFlow(remaining[0].draftVersion.nodes, null));
-        setEdges(mapFlowEdgesToReactFlow(remaining[0].draftVersion.edges));
-        setSelectedNodeId(remaining[0].draftVersion.nodes[0]?.id ?? null);
-      } else {
-        setSelectedFlowId('');
+      if (routeFlowId === deletedId) {
+        loadedFlowIdRef.current = null;
         setNodes([]);
         setEdges([]);
         setSelectedNodeId(null);
+        setSelectedEdgeId(null);
+        setHasUnsavedChanges(false);
+        navigate('/flows');
       }
-      setSelectedEdgeId(null);
-      setHasUnsavedChanges(false);
       setFeedback({ type: 'ok', text: 'Flujo eliminado correctamente.' });
     } catch (err) {
       setFeedback({
@@ -492,118 +506,39 @@ export function FlowsBuilderPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <section className="soft-card flex flex-wrap items-center justify-between gap-4 p-5">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-gradient text-white shadow-brand-icon">
-            <GitBranch className="h-5 w-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <label htmlFor="flow-selector" className="sr-only">
-                Seleccionar Flujo
-              </label>
-              <select
-                id="flow-selector"
-                value={activeFlow?.id ?? ''}
-                disabled={flows.length === 0}
-                onChange={(e) => handleSelectFlow(e.target.value)}
-                className="min-h-[40px] max-w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-1.5 text-sm font-extrabold text-soft-ink"
-              >
-                {flows.length === 0 ? (
-                  <option value="">Sin flujos disponibles</option>
-                ) : (
-                  flows.map((flow) => (
-                    <option key={flow.id} value={flow.id}>
-                      {flow.name} (v{flow.activeVersionNumber})
-                    </option>
-                  ))
-                )}
-              </select>
-
-              {canEditFlows ? (
-                <button
-                  type="button"
-                  onClick={() => newFlowDialogRef.current?.showModal()}
-                  className="inline-flex min-h-[40px] items-center gap-1 rounded-xl border border-soft-line bg-soft-bg px-3 py-1.5 text-xs font-extrabold text-soft-ink hover:border-soft-blue"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>Nuevo Flujo</span>
-                </button>
-              ) : null}
-
-              {activeFlow?.versions && activeFlow.versions.length > 0 ? (
-                <div className="inline-flex min-h-[40px] max-w-full items-center gap-1.5 rounded-xl border border-soft-line bg-soft-bg px-2.5 py-1">
-                  <History className="h-3.5 w-3.5 shrink-0 text-soft-blue" />
-                  <label htmlFor="flow-version-selector" className="sr-only">
-                    Restaurar versión anterior
-                  </label>
-                  <select
-                    id="flow-version-selector"
-                    disabled={isSaving || !canEditFlows}
-                    value={activeFlow.draftVersion.id}
-                    onChange={(e) => void handleRestoreVersion(e.target.value)}
-                    className="max-w-[200px] truncate bg-transparent text-xs font-bold text-soft-ink focus:outline-none sm:max-w-none"
-                  >
-                    {activeFlow.versions.map((ver) => (
-                      <option key={ver.id} value={ver.id}>
-                        v{ver.versionNumber} ·{' '}
-                        {ver.status === 'PUBLISHED' ? 'Publicada' : 'Borrador'} (
-                        {new Date(ver.createdAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                        )
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
-
-              {canEditFlows && activeFlow ? (
-                <button
-                  type="button"
-                  onClick={() => deleteFlowDialogRef.current?.showModal()}
-                  aria-label={`Eliminar flujo ${activeFlow.name}`}
-                  title="Eliminar flujo actual"
-                  className="grid min-h-[40px] min-w-[40px] place-items-center rounded-xl border border-soft-line bg-soft-bg text-soft-danger hover:border-soft-danger"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              ) : null}
-            </div>
-            <p className="mt-1.5 text-xs text-soft-muted">
-              {activeFlow?.description ??
-                'Crea tu primer flujo conversacional para diseñar nodos y simular respuestas.'}
-            </p>
-          </div>
-        </div>
-
-        {canEditFlows && activeFlow ? (
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              disabled={isSaving}
-              onClick={() => void handleSaveOrPublish(false)}
-              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-soft-line bg-soft-bg px-4 py-2 text-xs font-extrabold text-soft-ink hover:border-soft-blue disabled:opacity-60"
-            >
-              <Save className="h-3.5 w-3.5 text-soft-blue" />
-              <span>Guardar Borrador</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={isSaving}
-              onClick={() => void handleSaveOrPublish(true)}
-              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-brand-gradient px-4 py-2 text-xs font-extrabold text-white shadow-brand-icon disabled:opacity-60"
-            >
-              <Rocket className="h-3.5 w-3.5" />
-              <span>
-                Publicar Versión v{(activeFlow?.activeVersionNumber ?? 1) + 1}
-              </span>
-            </button>
-          </div>
-        ) : null}
-      </section>
+      {!routeFlowId ? (
+        <FlowsCatalogView
+          flows={flows}
+          bots={bots}
+          isLoading={isLoading}
+          canEditFlows={canEditFlows}
+          searchQuery={effectiveCatalogSearch}
+          onSearchQueryChange={setCatalogSearch}
+          botFilterId={catalogBotFilter}
+          onBotFilterChange={setCatalogBotFilter}
+          feedback={feedback}
+          onDismissFeedback={() => setFeedback(null)}
+          onClearFilters={() => {
+            setCatalogSearch('');
+            setCatalogBotFilter('ALL');
+          }}
+          onOpenCreateDialog={() => newFlowDialogRef.current?.showModal()}
+          onRequestDeleteFlow={requestDeleteFlow}
+        />
+      ) : (
+        <>
+          <FlowEditorHeader
+            flows={flows}
+            activeFlow={activeFlow}
+            canEditFlows={canEditFlows}
+            isSaving={isSaving}
+            onSelectFlow={handleSelectFlow}
+            onOpenCreateDialog={() => newFlowDialogRef.current?.showModal()}
+            onRestoreVersion={(verId) => void handleRestoreVersion(verId)}
+            onRequestDeleteFlow={requestDeleteFlow}
+            onSaveDraft={() => void handleSaveOrPublish(false)}
+            onPublishVersion={() => void handleSaveOrPublish(true)}
+          />
 
       {hasUnsavedChanges ? (
         <div
@@ -650,20 +585,18 @@ export function FlowsBuilderPage() {
         <div className="soft-card flex flex-col items-center justify-center gap-3 p-10 text-center">
           <GitBranch className="h-8 w-8 text-soft-blue" />
           <h2 className="text-base font-extrabold text-soft-ink">
-            Aún no hay flujos creados
+            Flujo no encontrado
           </h2>
           <p className="max-w-md text-xs text-soft-muted">
-            Crea un nuevo flujo conversacional para arrastrar disparadores, preguntas validadas, peticiones HTTP y handoff hacia Chatwoot.
+            El flujo solicitado no existe o fue eliminado. Regresa al catálogo para elegir otro flujo o crear uno nuevo.
           </p>
-          {canEditFlows ? (
-            <button
-              type="button"
-              onClick={() => newFlowDialogRef.current?.showModal()}
-              className="mt-1 min-h-[44px] rounded-xl bg-brand-gradient px-5 py-2.5 text-xs font-extrabold text-white shadow-brand-icon"
-            >
-              + Crear Mi Primer Flujo
-            </button>
-          ) : null}
+          <Link
+            to="/flows"
+            className="mt-1 inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-brand-gradient px-5 py-2.5 text-xs font-extrabold text-white shadow-brand-icon"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Volver al listado de flujos</span>
+          </Link>
         </div>
       ) : activeFlow ? (
         <>
@@ -762,6 +695,8 @@ export function FlowsBuilderPage() {
           </section>
         </>
       ) : null}
+        </>
+      )}
 
       <CreateFlowDialog
         dialogRef={newFlowDialogRef}
@@ -778,7 +713,7 @@ export function FlowsBuilderPage() {
 
       <DeleteFlowDialog
         dialogRef={deleteFlowDialogRef}
-        flowName={activeFlow?.name ?? ''}
+        flowName={deleteTargetFlow?.name ?? activeFlow?.name ?? ''}
         isSaving={isSaving}
         onConfirm={() => void handleConfirmDeleteFlow()}
       />
