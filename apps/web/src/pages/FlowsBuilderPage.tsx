@@ -664,32 +664,44 @@ export function FlowsBuilderPage() {
             />
 
             <div className="h-[560px] min-w-0">
-              <FlowSimulatorPanel
-                key={activeFlow.id}
-                flowId={activeFlow.id}
-                flowName={activeFlow.name}
-                onHighlightNode={(nodeId) => {
-                  setHighlightedNodeId(nodeId);
-                  setNodes((prev) =>
-                    prev.map((n) => {
-                      const nodeType = String(
-                        n.data?.nodeType || 'MESSAGE'
-                      ) as FlowNodeType;
-                      const accent = getFlowNodeAccentColor(nodeType);
-                      return {
-                        ...n,
-                        style: {
-                          ...n.style,
-                          border:
-                            n.id === nodeId
-                              ? '3px solid #82d616'
-                              : `2px solid ${accent}`
-                        }
-                      };
-                    })
-                  );
-                }}
-              />
+              {canEditFlows ? (
+                <FlowSimulatorPanel
+                  key={activeFlow.id}
+                  flowId={activeFlow.id}
+                  flowName={activeFlow.name}
+                  onHighlightNode={(nodeId) => {
+                    setHighlightedNodeId(nodeId);
+                    setNodes((prev) =>
+                      prev.map((n) => {
+                        const nodeType = String(
+                          n.data?.nodeType || 'MESSAGE'
+                        ) as FlowNodeType;
+                        const accent = getFlowNodeAccentColor(nodeType);
+                        return {
+                          ...n,
+                          style: {
+                            ...n.style,
+                            border:
+                              n.id === nodeId
+                                ? '3px solid #82d616'
+                                : `2px solid ${accent}`
+                          }
+                        };
+                      })
+                    );
+                  }}
+                />
+              ) : (
+                <div className="soft-card flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
+                  <AlertTriangle className="h-6 w-6 text-soft-warning" />
+                  <h3 className="text-sm font-extrabold text-soft-ink">
+                    Simulador en modo solo lectura
+                  </h3>
+                  <p className="text-xs text-soft-muted">
+                    Tu rol actual (VIEWER) solo permite visualizar flujos. Inicia sesión como OPERATOR o ADMIN para ejecutar simulaciones.
+                  </p>
+                </div>
+              )}
             </div>
           </section>
         </>

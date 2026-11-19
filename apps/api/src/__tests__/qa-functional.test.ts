@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { FlowEdge, FlowNode } from '@bothub/shared';
 import { buildApp } from '../app.js';
+import { isWithinBotBusinessHours } from '../lib/bot-runtime-utils.js';
 import { runtimeStore } from '../lib/runtime-store.js';
 import { provisionAdminAccountFromServer } from '../modules/auth/auth.service.js';
 import {
@@ -25,6 +26,23 @@ describe('Functional, Logic, Validation & Edge-Case Audit Suite', () => {
     expect(validateQuestionAnswer('2025-02-29', 'DATE').valid).toBe(false);
     expect(validateQuestionAnswer('31/02/2026', 'DATE').valid).toBe(false);
     expect(validateQuestionAnswer('2026-04-31', 'DATE').valid).toBe(false);
+
+    const closedAtSixBot = {
+      businessHoursEnabled: true,
+      timezone: 'UTC',
+      businessHours: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({
+        dayOfWeek,
+        isOpen: true,
+        openTime: '09:00',
+        closeTime: '18:00'
+      }))
+    } as Parameters<typeof isWithinBotBusinessHours>[0];
+    expect(
+      isWithinBotBusinessHours(closedAtSixBot, new Date('2026-11-19T18:30:00Z'))
+    ).toBe(false);
+    expect(
+      isWithinBotBusinessHours(closedAtSixBot, new Date('2026-11-19T17:59:00Z'))
+    ).toBe(true);
   });
 
   it('prevents infinite loops in flow graphs, avoids fake live defaults, and evaluates numeric/negative conditions accurately', async () => {

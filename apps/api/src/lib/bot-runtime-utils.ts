@@ -84,8 +84,12 @@ export function isWithinBotBusinessHours(bot: BotDto, now = new Date()): boolean
     }
     const [openH, openM] = schedule.openTime.split(':').map(Number);
     const [closeH, closeM] = schedule.closeTime.split(':').map(Number);
-    const openMinutes = (openH || 0) * 60 + (openM || 0);
-    const closeMinutes = (closeH || 23) * 60 + (closeM || 59);
+    const safeOpenH = Number.isInteger(openH) && openH >= 0 && openH <= 23 ? openH : 0;
+    const safeOpenM = Number.isInteger(openM) && openM >= 0 && openM <= 59 ? openM : 0;
+    const safeCloseH = Number.isInteger(closeH) && closeH >= 0 && closeH <= 23 ? closeH : 23;
+    const safeCloseM = Number.isInteger(closeM) && closeM >= 0 && closeM <= 59 ? closeM : 59;
+    const openMinutes = safeOpenH * 60 + safeOpenM;
+    const closeMinutes = safeCloseH * 60 + safeCloseM;
     return currentMinutes >= openMinutes && currentMinutes <= closeMinutes;
   } catch {
     return true;

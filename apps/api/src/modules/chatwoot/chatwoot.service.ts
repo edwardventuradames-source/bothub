@@ -1,16 +1,9 @@
 import crypto from 'node:crypto';
 import { Server as SocketIOServer } from 'socket.io';
 import {
-  ChatwootConfigDto,
   ChatwootConfigInput,
   ConversationDto
 } from '@bothub/shared';
-import {
-  isBotContactRateLimited,
-  isDuplicateInboundMessage,
-  isWithinBotBusinessHours,
-  matchBotQuickReply
-} from '../../lib/bot-runtime-utils.js';
 import {
   generateRandomOpaqueToken,
   verifySecretConstantTime
@@ -22,15 +15,10 @@ import {
   syncConversationStateToDb
 } from '../../lib/persistence.js';
 import {
-  executeFlowSimulationStep,
-  resolveActiveFlowGraph
-} from '../flows/flow.engine.js';
-import {
-  formatBotReplyForChatwoot,
-  sendMessageToChatwootApi,
   toggleChatwootConversationStatusApi,
   verifyChatwootConnectionApi
 } from './chatwoot.client.js';
+import { processIncomingChatwootCustomerMessage } from './chatwoot-inbound.js';
 
 export interface ChatwootWebhookPayload {
   id?: number;
@@ -69,6 +57,13 @@ export interface ChatwootWebhookPayload {
     email?: string;
     type?: string;
   };
+}
+
+export class ChatwootWebhookAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ChatwootWebhookAuthError';
+  }
 }
 
 export type OutboundWhatsAppForwarder = (params: {
@@ -125,6 +120,7 @@ export class ChatwootService {
     }
 
     runtimeStore.appendLog({
+      organizationId: bot?.organizationId,
       botId,
       level: 'INFO',
       event: 'chatwoot.config.saved',
@@ -181,6 +177,7 @@ export class ChatwootService {
       }
 
       runtimeStore.appendLog({
+        organizationId: bot?.organizationId,
         botId,
         level: 'INFO',
         event: 'chatwoot.connection.verified',
@@ -216,6 +213,7 @@ export class ChatwootService {
       }
 
       runtimeStore.appendLog({
+        organizationId: bot?.organizationId,
         botId,
         level: 'ERROR',
         event: 'chatwoot.connection.failed',
@@ -245,11 +243,13 @@ export class ChatwootService {
     const secrets = runtimeStore.getDecryptedChatwootTokens(botId);
 
     if (!config || !secrets) {
-      throw new Error('Token de webhook de Chatwoot ausente o no configurado.');
+      throw new ChatwootWebhookAuthError(
+        'Token de webhook de Chatwoot ausente o no configurado.'
+      );
     }
 
     if (!providedToken || !verifySecretConstantTime(providedToken, secrets.webhookToken)) {
-      throw new Error(
+      throw new ChatwootWebhookAuthError(
         'Token de webhook inválido o ausente (verificación en tiempo constante fallida).'
       );
     }
@@ -282,7 +282,7 @@ export class ChatwootService {
       senderTypeLower === 'contact';
 
     if (isIncomingCustomerMessage) {
-      return ChatwootService.handleIncomingCustomerMessage(
+      return processIncomingChatwootCustomerMessage(
         bot.id,
         config,
         secrets,
@@ -336,11 +336,13 @@ export class ChatwootService {
       }
 
       runtimeStore.appendLog({
+        organizationId: bot.organizationId,
         botId: bot.id,
         level: 'INFO',
         event: 'chatwoot.handoff.returned_to_bot',
         message: `El agente devolvió la conversación ${conversation.id} al bot mediante comando ${secrets.handoffReturnCommand}.`
       });
+      runtimeStore.persistStateToDisk();
 
       const contact = runtimeStore.contacts.find((c) => c.id === conversation.contactId);
       if (contact) {
@@ -377,11 +379,27 @@ export class ChatwootService {
       conversation.contactPhone &&
       !conversation.contactPhone.startsWith('chatwoot-')
     ) {
-      await outboundForwarder({
-        botId: bot.id,
-        toPhoneNumber: conversation.contactPhone,
-        text: content
-      });
+      try {
+        await outboundForwarder({
+          botId: bot.id,
+          toPhoneNumber: conversation.contactPhone,
+          text: content
+        });
+      } catch (err) {
+        const errMsg =
+          err instanceof Error ? err.message : 'Error reenviando mensaje de agente a WhatsApp';
+        const errLog = runtimeStore.appendLog({
+          organizationId: bot.organizationId,
+          botId: bot.id,
+          botName: bot.name,
+          level: 'ERROR',
+          event: 'chatwoot.outbound.error',
+          message: `Fallo al reenviar mensaje de "${agentName}" hacia ${conversation.contactPhone}: ${errMsg}`
+        });
+        if (io) {
+          io.to(`org:${bot.organizationId}`).emit('log:new', errLog);
+        }
+      }
     }
 
     runtimeStore.appendLog({
@@ -406,421 +424,6 @@ export class ChatwootService {
     return {
       accepted: true,
       action: 'forwarded_to_whatsapp',
-      conversation
-    };
-  }
-
-  private static async handleIncomingCustomerMessage(
-    botId: string,
-    config: ChatwootConfigDto,
-    secrets: {
-      apiAccessToken: string;
-      webhookToken: string;
-      handoffReturnCommand: string;
-    },
-    payload: ChatwootWebhookPayload,
-    content: string,
-    io?: SocketIOServer
-  ): Promise<{
-    accepted: boolean;
-    action: string;
-    conversation?: ConversationDto;
-  }> {
-    const bot = runtimeStore.bots.find((item) => item.id === botId);
-    if (!bot || bot.status === 'PAUSED' || !bot.isActive) {
-      return { accepted: true, action: 'ignored_bot_paused' };
-    }
-
-    if (
-      payload.id !== undefined &&
-      isDuplicateInboundMessage(`cw:${bot.id}:${payload.id}`)
-    ) {
-      return { accepted: true, action: 'duplicate_message_ignored' };
-    }
-
-    const chatwootConvId =
-      payload.conversation?.id ?? crypto.randomInt(9000, 9999);
-    const senderName =
-      payload.sender?.name ||
-      payload.conversation?.meta?.sender?.name ||
-      'Cliente Chatwoot';
-    const senderPhone =
-      payload.sender?.phone_number ||
-      payload.conversation?.meta?.sender?.phone_number ||
-      payload.conversation?.contact_inbox?.source_id ||
-      payload.sender?.email ||
-      `chatwoot-${chatwootConvId}`;
-    const senderChatwootId =
-      payload.sender?.id ||
-      payload.conversation?.meta?.sender?.id ||
-      chatwootConvId;
-
-    if (isBotContactRateLimited(bot.id, senderPhone, bot.rateLimitPerMinute)) {
-      const rateLog = runtimeStore.appendLog({
-        organizationId: bot.organizationId,
-        botId: bot.id,
-        botName: bot.name,
-        level: 'WARN',
-        event: 'chatwoot.rate_limited',
-        message: `Límite de mensajes por minuto excedido para ${senderPhone} en Chatwoot.`,
-        metadata: {
-          chatwootConversationId: chatwootConvId,
-          senderPhone
-        }
-      });
-      if (io) {
-        io.to(`org:${bot.organizationId}`).emit('log:new', rateLog);
-      }
-      return { accepted: true, action: 'rate_limited' };
-    }
-
-    let contact = runtimeStore.contacts.find(
-      (item) =>
-        item.organizationId === bot.organizationId &&
-        (item.chatwootContactId === senderChatwootId ||
-          item.phoneNumber === senderPhone)
-    );
-
-    if (!contact) {
-      contact = {
-        id: `contact-${crypto.randomUUID().slice(0, 8)}`,
-        organizationId: bot.organizationId,
-        name: senderName,
-        phoneNumber: senderPhone,
-        email: payload.sender?.email ?? null,
-        nationalId: null,
-        chatwootContactId: senderChatwootId,
-        tags: ['chatwoot-inbound'],
-        variables: {
-          nombre: senderName,
-          telefono: senderPhone
-        },
-        conversationsCount: 1,
-        lastInteractionAt: new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      };
-      runtimeStore.contacts.unshift(contact);
-    } else {
-      contact.name = senderName || contact.name;
-      contact.variables.nombre = contact.name;
-    }
-
-    const nowIso = new Date().toISOString();
-    let conversation = runtimeStore.conversations.find(
-      (item) =>
-        item.botId === bot.id &&
-        (item.chatwootConversationId === chatwootConvId ||
-          item.contactId === contact.id)
-    );
-
-    if (!conversation) {
-      conversation = {
-        id: `conv-${crypto.randomUUID().slice(0, 8)}`,
-        botId: bot.id,
-        botName: bot.name,
-        contactId: contact.id,
-        contactName: contact.name,
-        contactPhone: contact.phoneNumber,
-        chatwootConversationId: chatwootConvId,
-        status: 'BOT_ACTIVE',
-        assignedAgentName: null,
-        currentFlowName: bot.activeFlowName,
-        currentNodeId: null,
-        collectedVariables: { ...contact.variables },
-        tags: [...contact.tags],
-        handoffReason: null,
-        lastMessagePreview: content,
-        lastActivityAt: nowIso,
-        messages: [],
-        executionTrace: []
-      };
-      runtimeStore.conversations.unshift(conversation);
-    } else if (conversation.status === 'RESOLVED') {
-      conversation.status = 'BOT_ACTIVE';
-      conversation.assignedAgentName = null;
-      conversation.handoffReason = null;
-      conversation.currentNodeId = null;
-      contact.conversationsCount += 1;
-    }
-
-    conversation.messages.push({
-      id: `msg-${crypto.randomUUID().slice(0, 8)}`,
-      senderType: 'CONTACT',
-      senderName: contact.name,
-      content,
-      createdAt: nowIso
-    });
-    conversation.lastMessagePreview = content;
-    conversation.lastActivityAt = nowIso;
-
-    if (
-      conversation.status === 'AGENT_ACTIVE' ||
-      conversation.status === 'PENDING_AGENT'
-    ) {
-      runtimeStore.persistStateToDisk();
-      void syncConversationStateToDb(contact, conversation);
-      if (io) {
-        io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
-      }
-      return {
-        accepted: true,
-        action: 'recorded_while_agent_active',
-        conversation
-      };
-    }
-
-    if (!isWithinBotBusinessHours(bot)) {
-      const outMessage =
-        bot.outOfHoursMessage ||
-        'Gracias por comunicarte. En este momento estamos fuera de horario.';
-      const replyId = `reply-${crypto.randomUUID().slice(0, 8)}`;
-      const replyIso = new Date().toISOString();
-      conversation.messages.push({
-        id: replyId,
-        senderType: 'BOT',
-        senderName: bot.name,
-        content: outMessage,
-        createdAt: replyIso
-      });
-      conversation.lastMessagePreview = outMessage;
-      conversation.lastActivityAt = replyIso;
-      bot.messagesToday += 2;
-
-      await sendMessageToChatwootApi({
-        config,
-        apiAccessToken: secrets.apiAccessToken,
-        conversationId: chatwootConvId,
-        content: outMessage
-      });
-
-      const logEntry = runtimeStore.appendLog({
-        organizationId: bot.organizationId,
-        botId: bot.id,
-        botName: bot.name,
-        level: 'INFO',
-        event: 'chatwoot.out_of_hours',
-        message: `Mensaje fuera de horario enviado a Chatwoot (Conv #${chatwootConvId}).`
-      });
-      runtimeStore.persistStateToDisk();
-      void syncConversationStateToDb(contact, conversation);
-
-      if (io) {
-        io.to(`org:${bot.organizationId}`).emit('log:new', logEntry);
-        io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
-      }
-
-      return {
-        accepted: true,
-        action: 'out_of_hours_replied',
-        conversation
-      };
-    }
-
-    const matchedQuickReply = matchBotQuickReply(bot, content);
-
-    if (matchedQuickReply) {
-      const replyId = `reply-${crypto.randomUUID().slice(0, 8)}`;
-      const replyIso = new Date().toISOString();
-      conversation.messages.push({
-        id: replyId,
-        senderType: 'BOT',
-        senderName: bot.name,
-        content: matchedQuickReply.responseText,
-        createdAt: replyIso
-      });
-      conversation.lastMessagePreview = matchedQuickReply.responseText;
-      conversation.lastActivityAt = replyIso;
-      bot.messagesToday += 2;
-
-      await sendMessageToChatwootApi({
-        config,
-        apiAccessToken: secrets.apiAccessToken,
-        conversationId: chatwootConvId,
-        content: matchedQuickReply.responseText
-      });
-
-      const logEntry = runtimeStore.appendLog({
-        organizationId: bot.organizationId,
-        botId: bot.id,
-        botName: bot.name,
-        level: 'INFO',
-        event: 'chatwoot.quick_reply.sent',
-        message: `Respuesta rápida "${matchedQuickReply.title}" enviada a Chatwoot (Conv #${chatwootConvId}).`
-      });
-      runtimeStore.persistStateToDisk();
-      void syncConversationStateToDb(contact, conversation);
-
-      if (io) {
-        io.to(`org:${bot.organizationId}`).emit('log:new', logEntry);
-        io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
-      }
-
-      return {
-        accepted: true,
-        action: 'quick_reply_sent',
-        conversation
-      };
-    }
-
-    const flow =
-      (bot.activeFlowId
-        ? runtimeStore.flows.find(
-            (item) =>
-              item.id === bot.activeFlowId &&
-              item.organizationId === bot.organizationId
-          )
-        : undefined) ??
-      runtimeStore.flows.find(
-        (item) =>
-          item.organizationId === bot.organizationId &&
-          item.botId === bot.id &&
-          item.isMainMenu
-      );
-
-    if (!flow) {
-      runtimeStore.persistStateToDisk();
-      void syncConversationStateToDb(contact, conversation);
-      return {
-        accepted: true,
-        action: 'no_flow_assigned',
-        conversation
-      };
-    }
-
-    const activeGraph = resolveActiveFlowGraph(flow);
-    let currentNode = conversation.currentNodeId
-      ? activeGraph.nodes.find((n) => n.id === conversation.currentNodeId)
-      : undefined;
-    if (conversation.currentNodeId && !currentNode) {
-      conversation.currentNodeId = null;
-      currentNode = undefined;
-    }
-    const isAwaitingInteractiveNode =
-      currentNode?.type === 'QUESTION' ||
-      currentNode?.type === 'BUTTONS' ||
-      currentNode?.type === 'LIST';
-
-    const simulation = await executeFlowSimulationStep(
-      activeGraph.nodes,
-      activeGraph.edges,
-      {
-        inputMessage: content,
-        currentNodeId: conversation.currentNodeId,
-        awaitingQuestionNodeId: isAwaitingInteractiveNode
-          ? conversation.currentNodeId
-          : null,
-        variables: { ...contact.variables },
-        tags: [...contact.tags]
-      },
-      { isLiveExecution: true }
-    );
-
-    contact.variables = { ...simulation.variables };
-    if (simulation.variables.cedula) {
-      contact.nationalId = simulation.variables.cedula;
-    }
-    if (simulation.variables.correo || simulation.variables.email) {
-      contact.email = simulation.variables.correo || simulation.variables.email;
-    }
-    contact.tags = [...simulation.tags];
-    contact.lastInteractionAt = new Date().toISOString();
-
-    conversation.currentFlowName = flow.name;
-    conversation.currentNodeId = simulation.completed
-      ? null
-      : (simulation.awaitingQuestionNodeId ?? simulation.nextNodeId);
-    conversation.collectedVariables = { ...simulation.variables };
-    conversation.tags = [...simulation.tags];
-    conversation.executionTrace.push(...simulation.trace);
-
-    for (const reply of simulation.replies) {
-      const formattedText = formatBotReplyForChatwoot(reply);
-      conversation.messages.push({
-        id: reply.id,
-        senderType: 'BOT',
-        senderName: bot.name,
-        content: formattedText,
-        createdAt: new Date().toISOString()
-      });
-      conversation.lastMessagePreview = formattedText;
-
-      const apiRes = await sendMessageToChatwootApi({
-        config,
-        apiAccessToken: secrets.apiAccessToken,
-        conversationId: chatwootConvId,
-        content: formattedText,
-        reply
-      });
-
-      if (!apiRes.sent && apiRes.errorDetail !== 'skipped_local_url') {
-        const errLog = runtimeStore.appendLog({
-          organizationId: bot.organizationId,
-          botId: bot.id,
-          botName: bot.name,
-          level: 'ERROR',
-          event: 'chatwoot.api.error',
-          message: `Error enviando respuesta a Chatwoot (${config.baseUrl}/api/v1/accounts/${config.accountId}/conversations/${chatwootConvId}/messages): ${apiRes.errorDetail}`,
-          metadata: {
-            chatwootConversationId: chatwootConvId,
-            status: apiRes.status ?? null
-          }
-        });
-        if (io) {
-          io.to(`org:${bot.organizationId}`).emit('log:new', errLog);
-        }
-      }
-    }
-
-    if (simulation.handoffRequested) {
-      conversation.status = 'PENDING_AGENT';
-      conversation.handoffReason = simulation.handoffSummary;
-
-      if (simulation.handoffSummary) {
-        await sendMessageToChatwootApi({
-          config,
-          apiAccessToken: secrets.apiAccessToken,
-          conversationId: chatwootConvId,
-          content: simulation.handoffSummary,
-          isPrivate: true
-        });
-      }
-
-      await toggleChatwootConversationStatusApi({
-        config,
-        apiAccessToken: secrets.apiAccessToken,
-        conversationId: chatwootConvId,
-        status: 'open'
-      });
-    }
-
-    bot.messagesToday += 1 + simulation.replies.length;
-    conversation.lastActivityAt = new Date().toISOString();
-
-    runtimeStore.persistStateToDisk();
-    void syncConversationStateToDb(contact, conversation);
-
-    const logEntry = runtimeStore.appendLog({
-      organizationId: bot.organizationId,
-      botId: bot.id,
-      botName: bot.name,
-      level: 'INFO',
-      event: 'chatwoot.bot.replied',
-      message: `Flujo "${flow.name}" procesó mensaje de ${contact.name} en Chatwoot (Conv #${chatwootConvId}) con ${simulation.replies.length} respuesta(s).`,
-      metadata: {
-        chatwootConversationId: chatwootConvId,
-        repliesCount: simulation.replies.length,
-        handoffRequested: simulation.handoffRequested
-      }
-    });
-
-    if (io) {
-      io.to(`org:${bot.organizationId}`).emit('log:new', logEntry);
-      io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
-    }
-
-    return {
-      accepted: true,
-      action: 'bot_flow_replied',
       conversation
     };
   }

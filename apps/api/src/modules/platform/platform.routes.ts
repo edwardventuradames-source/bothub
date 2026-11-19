@@ -22,7 +22,11 @@ import { prisma } from '../../lib/prisma.js';
 import { assertSafeExternalUrl } from '../../lib/ssrf-guard.js';
 import { bumpUserTokenVersion } from '../auth/auth.service.js';
 import { toggleChatwootConversationStatusApi } from '../chatwoot/chatwoot.client.js';
-import { ChatwootService, ChatwootWebhookPayload } from '../chatwoot/chatwoot.service.js';
+import {
+  ChatwootService,
+  ChatwootWebhookAuthError,
+  ChatwootWebhookPayload
+} from '../chatwoot/chatwoot.service.js';
 import { BotNotFoundError } from '../whatsapp/inbound-pipeline.js';
 import { whatsappProvider } from '../whatsapp/whatsapp.provider.js';
 
@@ -289,7 +293,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       return {
         users: runtimeStore.users
           .filter((u) => u.organizationId === orgId)
-          .map(({ passwordHash: _ignored, ...publicUser }) => publicUser)
+          .map(({ passwordHash: _ignored, tokenVersion: _tv, ...publicUser }) => publicUser)
       };
     }
   );
@@ -626,10 +630,21 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         );
         return result;
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Error validando webhook.';
-        const statusCode = message.includes('no encontrado') ? 404 : 401;
-        return reply.status(statusCode).send({
-          error: statusCode === 404 ? 'BOT_NOT_FOUND' : 'WEBHOOK_UNAUTHORIZED',
+        const message = err instanceof Error ? err.message : 'Error procesando webhook.';
+        if (err instanceof ChatwootWebhookAuthError) {
+          return reply.status(401).send({
+            error: 'WEBHOOK_UNAUTHORIZED',
+            message
+          });
+        }
+        if (message.includes('no encontrado')) {
+          return reply.status(404).send({
+            error: 'BOT_NOT_FOUND',
+            message
+          });
+        }
+        return reply.status(502).send({
+          error: 'WEBHOOK_PROCESSING_ERROR',
           message
         });
       }
