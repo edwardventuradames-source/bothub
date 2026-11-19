@@ -20,7 +20,15 @@ declare module 'fastify' {
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
-    bodyLimit: 1048576
+    bodyLimit: 1048576,
+    trustProxy: [
+      '127.0.0.1/32',
+      '::1/128',
+      '10.0.0.0/8',
+      '172.16.0.0/12',
+      '192.168.0.0/16',
+      'fc00::/7'
+    ]
   });
 
   app.addContentTypeParser(

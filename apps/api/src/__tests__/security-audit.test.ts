@@ -9,7 +9,10 @@ import {
   assertSafeExternalUrl,
   isPrivateOrReservedIp
 } from '../lib/ssrf-guard.js';
-import { provisionAdminAccountFromServer } from '../modules/auth/auth.service.js';
+import {
+  isAccessTokenValidForUser,
+  provisionAdminAccountFromServer
+} from '../modules/auth/auth.service.js';
 import { ChatwootService } from '../modules/chatwoot/chatwoot.service.js';
 import { attachSocketServer } from '../plugins/socket.js';
 
@@ -21,16 +24,26 @@ describe('AppSec & OWASP Top 10 Security Audit Suite', () => {
     expect(isPrivateOrReservedIp('::1')).toBe(true);
     expect(isPrivateOrReservedIp('::ffff:127.0.0.1')).toBe(true);
     expect(isPrivateOrReservedIp('::ffff:7f00:1')).toBe(true);
+    expect(isPrivateOrReservedIp('::ffff:0:127.0.0.1')).toBe(true);
+    expect(isPrivateOrReservedIp('::127.0.0.1')).toBe(true);
+    expect(isPrivateOrReservedIp('64:ff9b::127.0.0.1')).toBe(true);
+    expect(isPrivateOrReservedIp('2002:7f00:1::')).toBe(true);
+    expect(isPrivateOrReservedIp('2001:db8::1')).toBe(true);
     expect(isPrivateOrReservedIp('8.8.8.8')).toBe(false);
 
     const blockedUrls = [
       'http://127.0.0.1:4000/api/health',
       'http://[::ffff:127.0.0.1]:4000/api/health',
+      'http://[::ffff:0:127.0.0.1]:4000/',
+      'http://[64:ff9b::127.0.0.1]/',
+      'http://[2002:7f00:1::]/',
       'http://[::1]:5432/',
       'http://localhost/admin',
       'http://169.254.169.254/latest/meta-data',
       'http://2130706433/',
       'http://0x7f000001/',
+      'https://user:pass@8.8.8.8/',
+      'https://nonexistent.invalid.bothub.tld/',
       'file:///etc/passwd',
       'ftp://files.example.com/data'
     ];
@@ -154,6 +167,38 @@ describe('AppSec & OWASP Top 10 Security Audit Suite', () => {
       headers: { authorization: `Bearer ${opToken}` }
     });
     expect(opMeAfterSuspend.statusCode).toBe(401);
+    expect(await isAccessTokenValidForUser({ sub: 'unknown-ghost-sub' })).toBe(false);
+
+    const usersListRes = await app.inject({
+      method: 'GET',
+      url: '/api/users',
+      headers: { authorization: `Bearer ${adminToken2}` }
+    });
+    expect(usersListRes.statusCode).toBe(200);
+    const listedUsers = (
+      usersListRes.json() as {
+        users: Array<{
+          id: string;
+          isActive: boolean;
+          tokenVersion?: number;
+          passwordHash?: string;
+        }>;
+      }
+    ).users;
+    expect(listedUsers[0]?.tokenVersion).toBeUndefined();
+    expect(listedUsers[0]?.passwordHash).toBeUndefined();
+    const suspendedListed = listedUsers.find((u) => u.id === opUser.id);
+    expect(suspendedListed?.isActive).toBe(false);
+
+    const suspendedRelogin = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: {
+        email: 'sec-op@bothub.test',
+        password: 'OpPassword2026!'
+      }
+    });
+    expect(suspendedRelogin.statusCode).toBe(401);
 
     let got429 = false;
     for (let i = 0; i < 14; i += 1) {
@@ -328,6 +373,45 @@ describe('AppSec & OWASP Top 10 Security Audit Suite', () => {
       (l) => l.botId === botA.id
     );
     expect(leakedLog).toBeUndefined();
+
+    const flowBRes = await app.inject({
+      method: 'POST',
+      url: '/api/flows',
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { name: 'Beta Flow', isMainMenu: true }
+    });
+    const flowB = (flowBRes.json() as { flow: { id: string } }).flow;
+
+    const crossCreateFlowRes = await app.inject({
+      method: 'POST',
+      url: '/api/flows',
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { name: 'Beta Cross Create', botId: botA.id, isMainMenu: false }
+    });
+    expect(crossCreateFlowRes.statusCode).toBe(404);
+
+    const crossBotLinkRes = await app.inject({
+      method: 'PUT',
+      url: `/api/flows/${flowB.id}/graph`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { botId: botA.id, nodes: [], edges: [], publish: false }
+    });
+    expect(crossBotLinkRes.statusCode).toBe(404);
+
+    const flowARes = await app.inject({
+      method: 'POST',
+      url: '/api/flows',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: { name: 'Alpha Flow', isMainMenu: true }
+    });
+    const flowAId = (flowARes.json() as { flow: { id: string } }).flow.id;
+    const viewerSimulate = await app.inject({
+      method: 'POST',
+      url: `/api/flows/${flowAId}/simulate`,
+      headers: { authorization: `Bearer ${tokenViewer}` },
+      payload: { inputMessage: 'hola', variables: {}, tags: [] }
+    });
+    expect(viewerSimulate.statusCode).toBe(403);
 
     await app.close();
   });

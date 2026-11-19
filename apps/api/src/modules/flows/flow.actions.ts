@@ -1,5 +1,8 @@
 import { FlowNode } from '@bothub/shared';
-import { assertSafeExternalUrl } from '../../lib/ssrf-guard.js';
+import {
+  pinnedSafeFetch,
+  resolveAndPinExternalUrl
+} from '../../lib/ssrf-guard.js';
 
 const ACTION_HTTP_TIMEOUT_MS = 8000;
 const MAX_RESPONSE_PREVIEW_CHARS = 1200;
@@ -39,39 +42,6 @@ function extractJsonPathValue(payload: unknown, pathExpr: string): string {
   return typeof cursor === 'string' ? cursor : JSON.stringify(cursor);
 }
 
-async function readBoundedResponseText(response: Response): Promise<string> {
-  if (!response.body) {
-    return (await response.text()).slice(0, MAX_RESPONSE_BYTES);
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    if (value) {
-      const remaining = MAX_RESPONSE_BYTES - totalBytes;
-      if (remaining <= 0) {
-        await reader.cancel().catch(() => undefined);
-        break;
-      }
-      if (value.byteLength > remaining) {
-        chunks.push(value.subarray(0, remaining));
-        totalBytes += remaining;
-        await reader.cancel().catch(() => undefined);
-        break;
-      }
-      chunks.push(value);
-      totalBytes += value.byteLength;
-    }
-  }
-
-  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
-}
-
 export async function executeHttpRequestNode(
   node: FlowNode,
   variables: Record<string, string>
@@ -102,7 +72,10 @@ export async function executeHttpRequestNode(
   }
 
   try {
-    parsedUrl = await assertSafeExternalUrl(parsedUrl.toString());
+    const checked = await resolveAndPinExternalUrl(parsedUrl.toString(), {
+      skipDnsResolution: true
+    });
+    parsedUrl = checked.url;
   } catch (err) {
     return {
       ok: false,
@@ -134,16 +107,13 @@ export async function executeHttpRequestNode(
     headers['Content-Type'] = 'application/json';
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ACTION_HTTP_TIMEOUT_MS);
-
   try {
-    const response = await fetch(parsedUrl.toString(), {
+    const response = await pinnedSafeFetch(parsedUrl.toString(), {
       method,
       headers,
-      redirect: 'manual',
       body: hasBody ? interpolateTemplate(rawBody, variables) : undefined,
-      signal: controller.signal
+      timeoutMs: ACTION_HTTP_TIMEOUT_MS,
+      maxBytes: MAX_RESPONSE_BYTES
     });
 
     if (response.status >= 300 && response.status < 400) {
@@ -157,11 +127,11 @@ export async function executeHttpRequestNode(
       };
     }
 
-    const rawText = await readBoundedResponseText(response);
+    const rawText = response.text;
     let extractedValue = rawText.slice(0, MAX_RESPONSE_PREVIEW_CHARS);
 
     const jsonPath = typeof node.data.responsePath === 'string' ? node.data.responsePath.trim() : '';
-    const contentType = response.headers.get('content-type') ?? '';
+    const contentType = response.headers['content-type'] ?? '';
     if (contentType.includes('application/json') || rawText.trim().startsWith('{')) {
       try {
         const parsedJson = JSON.parse(rawText) as unknown;
@@ -203,8 +173,6 @@ export async function executeHttpRequestNode(
       value: '',
       errorMessage: err instanceof Error ? err.message : 'Error de red en petición HTTP'
     };
-  } finally {
-    clearTimeout(timer);
   }
 }
 

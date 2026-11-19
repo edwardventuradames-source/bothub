@@ -167,7 +167,7 @@ class RuntimeStore {
       fs.writeFileSync(
         RUNTIME_STATE_FILE,
         JSON.stringify(payload, null, 2),
-        'utf8'
+        { encoding: 'utf8', mode: 0o600 }
       );
     } catch {
       void 0;
@@ -212,7 +212,7 @@ class RuntimeStore {
       fs.writeFileSync(
         USERS_STORAGE_FILE,
         JSON.stringify(this.users, null, 2),
-        'utf8'
+        { encoding: 'utf8', mode: 0o600 }
       );
     } catch {
       void 0;

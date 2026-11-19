@@ -595,7 +595,9 @@ export async function syncChatwootSecretsToDb(
 export async function syncFlowToDb(flow: FlowDto): Promise<void> {
   if (!isDatabaseConfigured() || !flow.botId) return;
   try {
-    const botExists = await prisma.bot.findUnique({ where: { id: flow.botId } });
+    const botExists = await prisma.bot.findFirst({
+      where: { id: flow.botId, organizationId: flow.organizationId }
+    });
     if (!botExists) return;
 
     await prisma.flow.upsert({

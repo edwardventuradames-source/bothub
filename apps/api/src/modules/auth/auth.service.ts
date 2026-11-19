@@ -26,6 +26,7 @@ const MILLISECONDS_PER_MINUTE = 60 * 1000;
 const MILLISECONDS_PER_DAY = 24 * 60 * MILLISECONDS_PER_MINUTE;
 const DUMMY_BCRYPT_HASH = bcrypt.hashSync(generateRandomOpaqueToken(16), BCRYPT_SALT_ROUNDS);
 const REFRESH_TOKENS_FILE = path.join(resolveSessionsDir(), 'refresh-tokens.json');
+const TOKEN_REVOCATIONS_FILE = path.join(resolveSessionsDir(), 'token-revocations.json');
 
 const fallbackRefreshTokens = new Map<
   string,
@@ -36,10 +37,62 @@ const fallbackResetTokens = new Map<
   { userId: string; expiresAt: number; used: boolean }
 >();
 const revokedAccessJtis = new Map<string, number>();
+const minUserTokenVersions = new Map<string, number>();
 
 function isTestRuntime(): boolean {
   return process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
 }
+
+function loadTokenRevocationsFromDisk(): void {
+  if (isTestRuntime()) return;
+  try {
+    if (!fs.existsSync(TOKEN_REVOCATIONS_FILE)) return;
+    const raw = fs.readFileSync(TOKEN_REVOCATIONS_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as {
+      jtis?: Array<[string, number]>;
+      userVersions?: Array<[string, number]>;
+    };
+    const now = Date.now();
+    if (Array.isArray(parsed.jtis)) {
+      for (const [jti, exp] of parsed.jtis) {
+        if (typeof jti === 'string' && typeof exp === 'number' && exp > now) {
+          revokedAccessJtis.set(jti, exp);
+        }
+      }
+    }
+    if (Array.isArray(parsed.userVersions)) {
+      for (const [uid, ver] of parsed.userVersions) {
+        if (typeof uid === 'string' && typeof ver === 'number' && ver > 1) {
+          minUserTokenVersions.set(uid, ver);
+        }
+      }
+    }
+  } catch {
+    void 0;
+  }
+}
+
+function persistTokenRevocationsToDisk(): void {
+  if (isTestRuntime()) return;
+  try {
+    const dir = resolveSessionsDir();
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const now = Date.now();
+    const jtis = Array.from(revokedAccessJtis.entries()).filter(([, exp]) => exp > now);
+    const userVersions = Array.from(minUserTokenVersions.entries());
+    fs.writeFileSync(
+      TOKEN_REVOCATIONS_FILE,
+      JSON.stringify({ jtis, userVersions }),
+      { encoding: 'utf8', mode: 0o600 }
+    );
+  } catch {
+    void 0;
+  }
+}
+
+loadTokenRevocationsFromDisk();
 
 function loadFallbackRefreshTokensFromDisk(): void {
   if (isTestRuntime()) return;
@@ -92,14 +145,18 @@ export function revokeAccessTokenJti(jti: string | undefined, expSeconds?: numbe
   }
   const expiresAtMs = expSeconds ? expSeconds * 1000 : now + ACCESS_TOKEN_MAX_REVOKE_WINDOW_MS;
   revokedAccessJtis.set(jti, expiresAtMs);
+  persistTokenRevocationsToDisk();
 }
 
 export function bumpUserTokenVersion(userId: string): number {
-  runtimeStore.reloadUsersFromDisk();
   const user = runtimeStore.users.find((u) => u.id === userId);
-  let nextVersion = 2;
+  const currentRecorded = Math.max(
+    user?.tokenVersion ?? 1,
+    minUserTokenVersions.get(userId) ?? 1
+  );
+  const nextVersion = currentRecorded + 1;
+  minUserTokenVersions.set(userId, nextVersion);
   if (user) {
-    nextVersion = (user.tokenVersion ?? 1) + 1;
     user.tokenVersion = nextVersion;
     runtimeStore.persistUsersToDisk();
   }
@@ -110,12 +167,13 @@ export function bumpUserTokenVersion(userId: string): number {
     }
   }
   persistFallbackRefreshTokensToDisk();
+  persistTokenRevocationsToDisk();
   return nextVersion;
 }
 
 export function getUserTokenVersion(userId: string): number {
   const user = runtimeStore.users.find((u) => u.id === userId);
-  return user?.tokenVersion ?? 1;
+  return Math.max(user?.tokenVersion ?? 1, minUserTokenVersions.get(userId) ?? 1);
 }
 
 export async function isAccessTokenValidForUser(payload: {
@@ -130,12 +188,16 @@ export async function isAccessTokenValidForUser(payload: {
       return false;
     }
   }
+  const minVersion = minUserTokenVersions.get(payload.sub) ?? 1;
+  if (payload.tokenVersion !== undefined && payload.tokenVersion < minVersion) {
+    return false;
+  }
   const memUser = runtimeStore.users.find((u) => u.id === payload.sub);
   if (memUser) {
     if (!memUser.isActive) {
       return false;
     }
-    const currentVersion = memUser.tokenVersion ?? 1;
+    const currentVersion = Math.max(memUser.tokenVersion ?? 1, minVersion);
     if (payload.tokenVersion !== undefined && payload.tokenVersion < currentVersion) {
       return false;
     }
@@ -149,10 +211,10 @@ export async function isAccessTokenValidForUser(payload: {
       });
       return Boolean(dbUser && dbUser.isActive);
     } catch {
-      return true;
+      return false;
     }
   }
-  return true;
+  return false;
 }
 
 export class AuthError extends Error {

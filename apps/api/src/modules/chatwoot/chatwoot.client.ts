@@ -1,8 +1,8 @@
 import { ChatwootConfigDto, FlowSimulationBotReply } from '@bothub/shared';
 import {
-  assertSafeExternalUrl,
   isBlockedHostnameOrIp,
-  isSimulatedLocalHostname
+  isSimulatedLocalHostname,
+  pinnedSafeFetch
 } from '../../lib/ssrf-guard.js';
 
 const HTTP_TIMEOUT_MS = 8000;
@@ -52,57 +52,51 @@ export async function verifyChatwootConnectionApi(params: {
     };
   }
 
-  await assertSafeExternalUrl(params.config.baseUrl);
   const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/inboxes/${params.config.inboxId}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
   const startedAt = Date.now();
 
-  try {
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        api_access_token: params.apiAccessToken
-      },
-      redirect: 'manual',
-      signal: controller.signal
-    });
-    const latencyMs = Math.max(1, Date.now() - startedAt);
+  const response = await pinnedSafeFetch(endpoint, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      api_access_token: params.apiAccessToken
+    },
+    timeoutMs: HTTP_TIMEOUT_MS
+  });
+  const latencyMs = Math.max(1, Date.now() - startedAt);
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      if (
-        response.status === 401 &&
-        errorText.toLowerCase().includes('not authorized for bots')
-      ) {
-        return {
-          connected: true,
-          latencyMs,
-          inboxName: `Agent Bot · Inbox #${params.config.inboxId}`,
-          message: `Conexión verificada con ${params.config.baseUrl} en ${latencyMs}ms (Token de Agent Bot autorizado para mensajes y handoff).`
-        };
-      }
-      throw new Error(
-        `Chatwoot respondió HTTP ${response.status}: ${errorText.slice(0, 180)}`
-      );
+  if (!response.ok) {
+    const errorText = response.text;
+    if (
+      response.status === 401 &&
+      errorText.toLowerCase().includes('not authorized for bots')
+    ) {
+      return {
+        connected: true,
+        latencyMs,
+        inboxName: `Agent Bot · Inbox #${params.config.inboxId}`,
+        message: `Conexión verificada con ${params.config.baseUrl} en ${latencyMs}ms (Token de Agent Bot autorizado para mensajes y handoff).`
+      };
     }
-
-    const payload = (await response.json().catch(() => ({}))) as {
-      name?: string;
-      id?: number;
-    };
-    const inboxName = payload.name || `Chatwoot Inbox #${params.config.inboxId}`;
-
-    return {
-      connected: true,
-      latencyMs,
-      inboxName,
-      message: `Conexión verificada con ${params.config.baseUrl} (${inboxName}) en ${latencyMs}ms.`
-    };
-  } finally {
-    clearTimeout(timer);
+    throw new Error(
+      `Chatwoot respondió HTTP ${response.status}: ${errorText.slice(0, 180)}`
+    );
   }
+
+  let payload: { name?: string; id?: number } = {};
+  try {
+    payload = JSON.parse(response.text) as { name?: string; id?: number };
+  } catch {
+    payload = {};
+  }
+  const inboxName = payload.name || `Chatwoot Inbox #${params.config.inboxId}`;
+
+  return {
+    connected: true,
+    latencyMs,
+    inboxName,
+    message: `Conexión verificada con ${params.config.baseUrl} (${inboxName}) en ${latencyMs}ms.`
+  };
 }
 
 function buildChatwootMessageBody(params: {
@@ -175,11 +169,8 @@ export async function sendMessageToChatwootApi(params: {
   }
 
   const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/conversations/${params.conversationId}/messages`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
 
   try {
-    await assertSafeExternalUrl(params.config.baseUrl);
     const firstPayload = buildChatwootMessageBody({
       content: trimmedContent,
       isPrivate: params.isPrivate,
@@ -187,15 +178,14 @@ export async function sendMessageToChatwootApi(params: {
       reply: params.reply
     });
 
-    let response = await fetch(endpoint, {
+    let response = await pinnedSafeFetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         api_access_token: params.apiAccessToken
       },
-      redirect: 'manual',
       body: JSON.stringify(firstPayload),
-      signal: controller.signal
+      timeoutMs: HTTP_TIMEOUT_MS
     });
 
     if (
@@ -203,13 +193,12 @@ export async function sendMessageToChatwootApi(params: {
       (response.status === 400 || response.status === 422) &&
       firstPayload.content_type === 'input_select'
     ) {
-      response = await fetch(endpoint, {
+      response = await pinnedSafeFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           api_access_token: params.apiAccessToken
         },
-        redirect: 'manual',
         body: JSON.stringify(
           buildChatwootMessageBody({
             content: trimmedContent,
@@ -218,16 +207,15 @@ export async function sendMessageToChatwootApi(params: {
             forcePlainText: true
           })
         ),
-        signal: controller.signal
+        timeoutMs: HTTP_TIMEOUT_MS
       });
     }
 
     if (!response.ok) {
-      const errorBody = await response.text().catch(() => '');
       return {
         sent: false,
         status: response.status,
-        errorDetail: `HTTP ${response.status}: ${errorBody.slice(0, 220)}`
+        errorDetail: `HTTP ${response.status}: ${response.text.slice(0, 220)}`
       };
     }
 
@@ -237,8 +225,6 @@ export async function sendMessageToChatwootApi(params: {
       sent: false,
       errorDetail: err instanceof Error ? err.message : 'Network error'
     };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -253,25 +239,19 @@ export async function toggleChatwootConversationStatusApi(params: {
   }
 
   const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/conversations/${params.conversationId}/toggle_status`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
 
   try {
-    await assertSafeExternalUrl(params.config.baseUrl);
-    await fetch(endpoint, {
+    await pinnedSafeFetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         api_access_token: params.apiAccessToken
       },
-      redirect: 'manual',
       body: JSON.stringify({ status: params.status }),
-      signal: controller.signal
+      timeoutMs: HTTP_TIMEOUT_MS
     });
   } catch {
     void 0;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

@@ -73,9 +73,19 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
       const data = parsed.data;
       const nowIso = new Date().toISOString();
-      const targetBot = data.botId
-        ? runtimeStore.bots.find((b) => b.id === data.botId && b.organizationId === orgId)
-        : null;
+      let targetBot = null;
+      if (data.botId) {
+        targetBot =
+          runtimeStore.bots.find(
+            (b) => b.id === data.botId && b.organizationId === orgId
+          ) ?? null;
+        if (!targetBot) {
+          return reply.status(404).send({
+            error: 'BOT_NOT_FOUND',
+            message: 'El bot especificado no pertenece a tu organización.'
+          });
+        }
+      }
 
       const starterNodes = [
         {
@@ -188,13 +198,24 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       const data = parsed.data;
       const nowIso = new Date().toISOString();
 
+      let matchedBot: (typeof runtimeStore.bots)[number] | null = null;
+      if (data.botId !== undefined && data.botId !== null) {
+        matchedBot =
+          runtimeStore.bots.find(
+            (b) => b.id === data.botId && b.organizationId === orgId
+          ) ?? null;
+        if (!matchedBot) {
+          return reply.status(404).send({
+            error: 'BOT_NOT_FOUND',
+            message: 'El bot especificado no pertenece a tu organización.'
+          });
+        }
+      }
+
       if (data.name !== undefined) flow.name = data.name;
       if (data.description !== undefined) flow.description = data.description;
       if (data.botId !== undefined) {
-        flow.botId = data.botId;
-        const matchedBot = runtimeStore.bots.find(
-          (b) => b.id === data.botId && b.organizationId === orgId
-        );
+        flow.botId = matchedBot ? matchedBot.id : null;
         flow.botName = matchedBot ? matchedBot.name : null;
         if (matchedBot) {
           matchedBot.activeFlowId = flow.id;
@@ -302,7 +323,7 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { id: string } }>(
     '/:id/simulate',
     {
-      preHandler: [app.authenticate],
+      preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
       schema: {
         tags: ['Flows'],
         summary: 'Ejecutar un paso en el probador interactivo del flujo'
