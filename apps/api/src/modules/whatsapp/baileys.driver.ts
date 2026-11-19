@@ -271,19 +271,45 @@ export class BaileysDriver implements WhatsAppProviderDriver {
     const formattedText = formatBotReplyForChatwoot(reply);
 
     if (reply.mediaUrl) {
-      const lowerUrl = reply.mediaUrl.toLowerCase();
-      if (lowerUrl.endsWith('.pdf') || lowerUrl.endsWith('.doc') || lowerUrl.endsWith('.docx')) {
+      const cleanPath = reply.mediaUrl.split('?')[0].toLowerCase();
+      if (/\.(mp3|ogg|wav|m4a|opus)$/.test(cleanPath) || reply.mediaType === 'audio') {
+        await sock.sendMessage(targetJid, {
+          audio: { url: reply.mediaUrl },
+          mimetype: cleanPath.endsWith('.ogg') || cleanPath.endsWith('.opus')
+            ? 'audio/ogg; codecs=opus'
+            : 'audio/mpeg'
+        });
+        if (formattedText) {
+          await sock.sendMessage(targetJid, { text: formattedText });
+        }
+        return;
+      }
+      if (/\.(mp4|mov|webm)$/.test(cleanPath)) {
+        await sock.sendMessage(targetJid, {
+          video: { url: reply.mediaUrl },
+          caption: formattedText || undefined
+        });
+        return;
+      }
+      if (
+        /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|csv|txt|zip)$/.test(cleanPath) ||
+        reply.mediaType === 'document'
+      ) {
+        const rawFileName = cleanPath.split('/').pop() || 'archivo';
+        const mimetype = cleanPath.endsWith('.pdf')
+          ? 'application/pdf'
+          : 'application/octet-stream';
         await sock.sendMessage(targetJid, {
           document: { url: reply.mediaUrl },
-          mimetype: 'application/pdf',
-          fileName: 'documento.pdf',
-          caption: formattedText
+          mimetype,
+          fileName: rawFileName,
+          caption: formattedText || undefined
         });
         return;
       }
       await sock.sendMessage(targetJid, {
         image: { url: reply.mediaUrl },
-        caption: formattedText
+        caption: formattedText || undefined
       });
       return;
     }

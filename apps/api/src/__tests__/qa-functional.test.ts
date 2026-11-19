@@ -610,4 +610,238 @@ describe('Functional, Logic, Validation & Edge-Case Audit Suite', () => {
 
     await app.close();
   });
+
+  it('executes all 12 flow node types (including MESSAGE mediaUrl, CONDITION empty vars, HTTP, AI fallback, ASSIGN_TAG, HANDOFF, END) and supports RESOLVE + Chatwoot sync', async () => {
+    const { executeFlowSimulationStep } = await import('../modules/flows/flow.engine.js');
+    const { formatBotReplyForChatwoot } = await import('../modules/chatwoot/chatwoot.client.js');
+
+    const now = new Date().toISOString();
+    const nodes = [
+      {
+        id: 'n-trig',
+        type: 'TRIGGER' as const,
+        position: { x: 0, y: 0 },
+        data: { matchMode: 'EXACT', keyword: 'iniciar' }
+      },
+      {
+        id: 'n-msg-media',
+        type: 'MESSAGE' as const,
+        position: { x: 100, y: 0 },
+        data: {
+          text: 'Hola {{nombre}}',
+          mediaUrl: 'https://cdn.example.com/catalogo/{{archivo}}.pdf'
+        }
+      },
+      {
+        id: 'n-cond-missing',
+        type: 'CONDITION' as const,
+        position: { x: 200, y: 0 },
+        data: { variableName: 'cedula', operator: 'NOT_EMPTY', compareValue: '' }
+      },
+      {
+        id: 'n-q',
+        type: 'QUESTION' as const,
+        position: { x: 300, y: 0 },
+        data: { promptText: 'Indica tu edad', variableName: ' {{edad}} ', validationType: 'NUMBER' }
+      },
+      {
+        id: 'n-btn',
+        type: 'BUTTONS' as const,
+        position: { x: 400, y: 0 },
+        data: {
+          bodyText: 'Elige plan',
+          buttons: [
+            { id: 'b-1', label: '1. Pro' },
+            { id: 'b-2', label: '2. Basico' }
+          ]
+        }
+      },
+      {
+        id: 'n-list',
+        type: 'LIST' as const,
+        position: { x: 500, y: 0 },
+        data: {
+          bodyText: 'Elige servicio',
+          items: [{ id: 'l-1', title: '1. Soporte' }]
+        }
+      },
+      {
+        id: 'n-delay',
+        type: 'DELAY' as const,
+        position: { x: 600, y: 0 },
+        data: { delaySeconds: 1 }
+      },
+      {
+        id: 'n-tag',
+        type: 'ASSIGN_TAG' as const,
+        position: { x: 700, y: 0 },
+        data: { tags: ['vip', 'pro'] }
+      },
+      {
+        id: 'n-ai',
+        type: 'AI_PROMPT' as const,
+        position: { x: 800, y: 0 },
+        data: {
+          model: 'gpt-4o-mini',
+          systemPrompt: 'Ayuda a {{nombre}}',
+          saveToVariable: 'respuesta_ia',
+          fallbackMessage: 'Fallback IA {{edad}}'
+        }
+      },
+      {
+        id: 'n-end',
+        type: 'END' as const,
+        position: { x: 900, y: 0 },
+        data: { farewellMessage: 'Listo {{nombre}}, edad {{edad}}.' }
+      },
+      {
+        id: 'n-handoff',
+        type: 'HANDOFF' as const,
+        position: { x: 900, y: 120 },
+        data: {
+          teamName: 'Ventas',
+          clientMessage: 'Pasando a asesor',
+          privateNoteTemplate: 'Cliente {{nombre}}'
+        }
+      }
+    ];
+    const edges = [
+      { id: 'e1', source: 'n-trig', target: 'n-msg-media' },
+      { id: 'e2', source: 'n-msg-media', target: 'n-cond-missing' },
+      { id: 'e3', source: 'n-cond-missing', sourceHandle: 'false', target: 'n-q' },
+      { id: 'e4', source: 'n-cond-missing', sourceHandle: 'true', target: 'n-handoff' },
+      { id: 'e5', source: 'n-q', target: 'n-btn' },
+      { id: 'e6', source: 'n-btn', sourceHandle: 'b-1', target: 'n-list' },
+      { id: 'e7', source: 'n-list', sourceHandle: 'l-1', target: 'n-delay' },
+      { id: 'e8', source: 'n-delay', target: 'n-tag' },
+      { id: 'e9', source: 'n-tag', target: 'n-ai' },
+      { id: 'e10', source: 'n-ai', target: 'n-end' }
+    ];
+
+    const step1 = await executeFlowSimulationStep(nodes, edges, {
+      inputMessage: 'iniciar',
+      variables: { nombre: 'Ana', archivo: 'precios' },
+      tags: []
+    });
+    expect(step1.replies[0]?.mediaUrl).toBe('https://cdn.example.com/catalogo/precios.pdf');
+    expect(step1.replies[0]?.mediaType).toBe('document');
+    expect(formatBotReplyForChatwoot(step1.replies[0]!)).toContain('https://cdn.example.com/catalogo/precios.pdf');
+    expect(step1.awaitingQuestionNodeId).toBe('n-q');
+
+    const step2 = await executeFlowSimulationStep(nodes, edges, {
+      inputMessage: '29',
+      currentNodeId: step1.nextNodeId,
+      awaitingQuestionNodeId: step1.awaitingQuestionNodeId,
+      variables: step1.variables,
+      tags: step1.tags
+    });
+    expect(step2.variables.edad).toBe('29');
+    expect(step2.awaitingQuestionNodeId).toBe('n-btn');
+
+    const step3 = await executeFlowSimulationStep(nodes, edges, {
+      inputMessage: '1',
+      currentNodeId: step2.nextNodeId,
+      awaitingQuestionNodeId: step2.awaitingQuestionNodeId,
+      variables: step2.variables,
+      tags: step2.tags
+    });
+    expect(step3.awaitingQuestionNodeId).toBe('n-list');
+
+    const step4 = await executeFlowSimulationStep(nodes, edges, {
+      inputMessage: '1',
+      currentNodeId: step3.nextNodeId,
+      awaitingQuestionNodeId: step3.awaitingQuestionNodeId,
+      variables: step3.variables,
+      tags: step3.tags
+    });
+    expect(step4.tags).toEqual(['vip', 'pro']);
+    expect(step4.completed).toBe(true);
+    expect(step4.replies.some((r) => r.text.includes('Fallback IA 29'))).toBe(true);
+    expect(step4.replies.some((r) => r.text.includes('Listo Ana, edad 29.'))).toBe(true);
+
+    const app = await buildApp();
+    await provisionAdminAccountFromServer({
+      email: 'resolve-admin@bothub.test',
+      password: 'Password2026!',
+      name: 'Resolve Admin',
+      organizationName: 'Resolve Org'
+    });
+    const loginRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'resolve-admin@bothub.test', password: 'Password2026!' }
+    });
+    const token = (loginRes.json() as { accessToken: string }).accessToken;
+    const orgId = (loginRes.json() as { user: { organizationId: string } }).user.organizationId;
+
+    runtimeStore.bots.push({
+      id: 'bot-resolve-1',
+      organizationId: orgId,
+      name: 'Bot Resolve',
+      description: 'Resolve test',
+      phoneNumber: '+18090001111',
+      driver: 'CHATWOOT',
+      status: 'CONNECTED',
+      isActive: true,
+      activeFlowId: null,
+      activeFlowName: null,
+      timezone: 'America/Bogota',
+      businessHoursEnabled: false,
+      outOfHoursMessage: 'Cerrado',
+      inactivityTimeoutMinutes: 15,
+      inactivityCloseMessage: 'Fin',
+      typingDelayMs: 0,
+      rateLimitPerMinute: 30,
+      messagesToday: 0,
+      activeConversations: 0,
+      handoffRate: 0,
+      qrCodeData: null,
+      qrExpiresAt: null,
+      lastConnectedAt: now,
+      chatwootConfig: null,
+      cloudApiConfig: null,
+      businessHours: [],
+      quickReplies: [],
+      createdAt: now,
+      updatedAt: now
+    });
+    runtimeStore.conversations.push({
+      id: 'conv-resolve-1',
+      botId: 'bot-resolve-1',
+      botName: 'Bot Resolve',
+      contactId: 'c-res-1',
+      contactName: 'Cliente Resolve',
+      contactPhone: '+18090002222',
+      chatwootConversationId: 777,
+      status: 'PENDING_AGENT',
+      assignedAgentName: null,
+      currentFlowName: 'Principal',
+      currentNodeId: null,
+      collectedVariables: {},
+      tags: [],
+      handoffReason: 'Old',
+      lastMessagePreview: 'hola',
+      lastActivityAt: now,
+      messages: [],
+      executionTrace: []
+    });
+
+    const resolveRes = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/conv-resolve-1/handoff',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { action: 'RESOLVE' }
+    });
+    expect(resolveRes.statusCode).toBe(200);
+    expect((resolveRes.json() as { conversation: { status: string } }).conversation.status).toBe('RESOLVED');
+
+    const syncRes = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/sync-chatwoot',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(syncRes.statusCode).toBe(200);
+
+    await app.close();
+  });
 });

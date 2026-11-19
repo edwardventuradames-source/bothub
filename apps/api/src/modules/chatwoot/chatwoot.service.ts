@@ -16,6 +16,7 @@ import {
 } from '../../lib/persistence.js';
 import {
   fetchChatwootAccountLabelsApi,
+  fetchChatwootConversationStatusApi,
   toggleChatwootConversationStatusApi,
   verifyChatwootConnectionApi
 } from './chatwoot.client.js';
@@ -496,5 +497,73 @@ export class ChatwootService {
       action: 'forwarded_to_whatsapp',
       conversation
     };
+  }
+
+  public static async syncOrganizationConversations(
+    orgId: string,
+    io?: SocketIOServer
+  ): Promise<{ checkedCount: number; updatedCount: number }> {
+    const orgBotIds = new Set(
+      runtimeStore.bots.filter((b) => b.organizationId === orgId).map((b) => b.id)
+    );
+    let checkedCount = 0;
+    let updatedCount = 0;
+
+    for (const conv of runtimeStore.conversations) {
+      if (
+        !orgBotIds.has(conv.botId) ||
+        !conv.chatwootConversationId ||
+        conv.status === 'RESOLVED'
+      ) {
+        continue;
+      }
+      const config = runtimeStore.getChatwootConfigDto(conv.botId);
+      const secrets = runtimeStore.getDecryptedChatwootTokens(conv.botId);
+      if (!config || !secrets) continue;
+
+      const token = secrets.userApiAccessToken || secrets.apiAccessToken;
+      if (!token) continue;
+
+      checkedCount += 1;
+      const statusRes = await fetchChatwootConversationStatusApi({
+        config,
+        apiAccessToken: token,
+        conversationId: conv.chatwootConversationId
+      });
+      if (!statusRes.ok || !statusRes.status) continue;
+
+      let changed = false;
+      if (statusRes.status === 'resolved') {
+        conv.status = 'RESOLVED';
+        conv.currentNodeId = null;
+        changed = true;
+      } else if (statusRes.status === 'pending' && conv.status !== 'BOT_ACTIVE') {
+        conv.status = 'BOT_ACTIVE';
+        conv.assignedAgentName = null;
+        conv.handoffReason = null;
+        conv.currentNodeId = null;
+        changed = true;
+      } else if (statusRes.status === 'open' && conv.status === 'BOT_ACTIVE') {
+        conv.status = 'PENDING_AGENT';
+        changed = true;
+      }
+
+      if (changed) {
+        conv.lastActivityAt = new Date().toISOString();
+        updatedCount += 1;
+        const contact = runtimeStore.contacts.find((c) => c.id === conv.contactId);
+        if (contact) {
+          void syncConversationStateToDb(contact, conv);
+        }
+        if (io) {
+          io.to(`org:${orgId}`).emit('conversation:updated', conv);
+        }
+      }
+    }
+
+    if (updatedCount > 0) {
+      runtimeStore.persistStateToDisk();
+    }
+    return { checkedCount, updatedCount };
   }
 }

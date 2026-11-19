@@ -232,20 +232,59 @@ export async function sendMessageToChatwootApi(params: {
   }
 }
 
+export async function fetchChatwootConversationStatusApi(params: {
+  config: ChatwootConfigDto;
+  apiAccessToken: string;
+  conversationId: number;
+}): Promise<{ ok: boolean; status?: string; errorDetail?: string }> {
+  if (!shouldCallRemoteChatwoot(params.config.baseUrl, params.conversationId)) {
+    return { ok: false, errorDetail: 'skipped_local_url' };
+  }
+
+  const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/conversations/${params.conversationId}`;
+  try {
+    const response = await pinnedSafeFetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        api_access_token: params.apiAccessToken
+      },
+      timeoutMs: HTTP_TIMEOUT_MS
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        errorDetail: `HTTP ${response.status}: ${response.text.slice(0, 140)}`
+      };
+    }
+    const data = JSON.parse(response.text || '{}') as {
+      status?: string;
+      payload?: { status?: string };
+    };
+    const convStatus = (data.status ?? data.payload?.status ?? '').toLowerCase();
+    return { ok: true, status: convStatus };
+  } catch (err) {
+    return {
+      ok: false,
+      errorDetail: err instanceof Error ? err.message : 'Network error'
+    };
+  }
+}
+
 export async function toggleChatwootConversationStatusApi(params: {
   config: ChatwootConfigDto;
   apiAccessToken: string;
   conversationId: number;
   status: 'open' | 'pending' | 'resolved';
-}): Promise<void> {
+}): Promise<{ ok: boolean; statusCode?: number; errorDetail?: string }> {
   if (!shouldCallRemoteChatwoot(params.config.baseUrl, params.conversationId)) {
-    return;
+    return { ok: false, errorDetail: 'skipped_local_url' };
   }
 
   const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/conversations/${params.conversationId}/toggle_status`;
 
   try {
-    await pinnedSafeFetch(endpoint, {
+    const response = await pinnedSafeFetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -254,8 +293,19 @@ export async function toggleChatwootConversationStatusApi(params: {
       body: JSON.stringify({ status: params.status }),
       timeoutMs: HTTP_TIMEOUT_MS
     });
-  } catch {
-    void 0;
+    if (!response.ok) {
+      return {
+        ok: false,
+        statusCode: response.status,
+        errorDetail: `HTTP ${response.status}: ${response.text.slice(0, 140)}`
+      };
+    }
+    return { ok: true, statusCode: response.status };
+  } catch (err) {
+    return {
+      ok: false,
+      errorDetail: err instanceof Error ? err.message : 'Network error'
+    };
   }
 }
 
@@ -278,6 +328,10 @@ export function formatBotReplyForChatwoot(reply: FlowSimulationBotReply): string
       return `${idx + 1}. ${item.title}${desc}`;
     });
     formatted = `${formatted}\n\n${listLines.join('\n')}`;
+  }
+
+  if (reply.mediaUrl && !formatted.includes(reply.mediaUrl)) {
+    formatted = formatted ? `${formatted}\n\n${reply.mediaUrl}` : reply.mediaUrl;
   }
 
   return formatted;

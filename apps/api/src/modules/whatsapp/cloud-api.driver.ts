@@ -381,16 +381,50 @@ export class CloudApiDriver implements WhatsAppProviderDriver {
           }
         }
       };
+    } else if (reply.mediaUrl && /^https?:\/\/.+/i.test(reply.mediaUrl)) {
+      const cleanPath = reply.mediaUrl.split('?')[0].toLowerCase();
+      const caption = formatBotReplyForChatwoot({ ...reply, mediaUrl: undefined }).slice(0, 1024);
+      if (/\.(mp3|ogg|wav|m4a|opus)$/.test(cleanPath) || reply.mediaType === 'audio') {
+        bodyPayload = {
+          messaging_product: 'whatsapp',
+          to: normalizedTo,
+          type: 'audio',
+          audio: { link: reply.mediaUrl }
+        };
+      } else if (/\.(mp4|mov)$/.test(cleanPath)) {
+        bodyPayload = {
+          messaging_product: 'whatsapp',
+          to: normalizedTo,
+          type: 'video',
+          video: { link: reply.mediaUrl, ...(caption ? { caption } : {}) }
+        };
+      } else if (
+        /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|csv|txt|zip)$/.test(cleanPath) ||
+        reply.mediaType === 'document'
+      ) {
+        const filename = cleanPath.split('/').pop() || 'archivo';
+        bodyPayload = {
+          messaging_product: 'whatsapp',
+          to: normalizedTo,
+          type: 'document',
+          document: { link: reply.mediaUrl, filename, ...(caption ? { caption } : {}) }
+        };
+      } else {
+        bodyPayload = {
+          messaging_product: 'whatsapp',
+          to: normalizedTo,
+          type: 'image',
+          image: { link: reply.mediaUrl, ...(caption ? { caption } : {}) }
+        };
+      }
     } else {
       bodyPayload = {
         messaging_product: 'whatsapp',
         to: normalizedTo,
         type: 'text',
         text: {
-          preview_url: Boolean(reply.mediaUrl),
-          body: reply.mediaUrl
-            ? `${formatBotReplyForChatwoot(reply)}\n${reply.mediaUrl}`
-            : formatBotReplyForChatwoot(reply)
+          preview_url: false,
+          body: formatBotReplyForChatwoot(reply)
         }
       };
     }

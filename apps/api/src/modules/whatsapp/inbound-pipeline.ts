@@ -463,6 +463,7 @@ export async function processInboundWhatsAppMessage(
       senderName: bot.name,
       content: formatted,
       mediaUrl: reply.mediaUrl,
+      mediaType: reply.mediaType,
       createdAt: new Date().toISOString()
     });
   }

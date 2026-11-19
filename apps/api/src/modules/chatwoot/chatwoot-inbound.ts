@@ -417,6 +417,8 @@ export async function processIncomingChatwootCustomerMessage(
       senderType: 'BOT',
       senderName: bot.name,
       content: formattedText,
+      mediaUrl: reply.mediaUrl,
+      mediaType: reply.mediaType,
       createdAt: new Date().toISOString()
     });
     conversation.lastMessagePreview = formattedText;

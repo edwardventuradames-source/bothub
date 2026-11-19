@@ -105,7 +105,7 @@ export const CreateApiKeyInputSchema = z.object({
 export type CreateApiKeyInput = z.infer<typeof CreateApiKeyInputSchema>;
 
 export const HandoffActionInputSchema = z.object({
-  action: z.enum(['RETURN_TO_BOT', 'TRANSFER_TO_AGENT']),
+  action: z.enum(['RETURN_TO_BOT', 'TRANSFER_TO_AGENT', 'RESOLVE']),
   reason: z.string().max(400).optional()
 });
 export type HandoffActionInput = z.infer<typeof HandoffActionInputSchema>;

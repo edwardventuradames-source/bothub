@@ -148,6 +148,24 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
             status: 'pending'
           });
         }
+      } else if (parsed.data.action === 'RESOLVE') {
+        conversation.status = 'RESOLVED';
+        conversation.currentNodeId = null;
+        conversation.messages.push({
+          id: `msg-${crypto.randomUUID().slice(0, 8)}`,
+          senderType: 'SYSTEM',
+          senderName: 'BotHub Control',
+          content: '✅ Conversación marcada como resuelta.',
+          createdAt: new Date().toISOString()
+        });
+        if (cwConfig && cwTokens && conversation.chatwootConversationId) {
+          await toggleChatwootConversationStatusApi({
+            config: cwConfig,
+            apiAccessToken: cwTokens.apiAccessToken,
+            conversationId: conversation.chatwootConversationId,
+            status: 'resolved'
+          });
+        }
       } else {
         conversation.status = 'PENDING_AGENT';
         conversation.handoffReason =
@@ -179,6 +197,21 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         app.io.to(`org:${orgId}`).emit('conversation:updated', conversation);
       }
       return { conversation };
+    }
+  );
+
+  app.post(
+    '/conversations/sync-chatwoot',
+    {
+      preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
+      schema: {
+        tags: ['Conversations'],
+        summary: 'Sincronizar estado actual de conversaciones abiertas con Chatwoot'
+      }
+    },
+    async (request) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      return ChatwootService.syncOrganizationConversations(orgId, app.io);
     }
   );
 
