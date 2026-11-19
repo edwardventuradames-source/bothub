@@ -373,6 +373,7 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         event: 'flow.deleted',
         message: `Flujo "${removedFlow.name}" eliminado.`
       });
+      runtimeStore.persistStateToDisk();
       void deleteFlowFromDb(removedFlow.id);
       return { success: true };
     }

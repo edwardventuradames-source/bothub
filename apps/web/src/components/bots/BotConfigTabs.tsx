@@ -32,11 +32,11 @@ export function BotConfigTabs({
   return (
     <section className="soft-card p-6">
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-soft-line pb-4">
-        <div>
+        <div className="min-w-0">
           <span className="text-[11px] font-extrabold uppercase tracking-wider text-soft-blue">
             Configuración Detallada del Bot
           </span>
-          <h2 className="text-lg font-extrabold text-soft-ink">
+          <h2 className="truncate text-lg font-extrabold text-soft-ink">
             {selectedBot.name} {selectedBot.phoneNumber ? `(${selectedBot.phoneNumber})` : ''}
           </h2>
         </div>
@@ -44,16 +44,17 @@ export function BotConfigTabs({
         <div
           role="tablist"
           aria-label="Pestañas de configuración del bot"
-          className="flex flex-nowrap gap-2 overflow-x-auto"
+          className="flex flex-wrap gap-2"
         >
           {!isChatwootOnlyBot ? (
             <button
               id="tab-whatsapp"
               role="tab"
               aria-selected={activeTab === 'whatsapp'}
+              aria-controls="panel-whatsapp"
               type="button"
               onClick={() => setActiveTab('whatsapp')}
-              className={`inline-flex flex-none items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-all ${
+              className={`inline-flex min-h-[40px] flex-none items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-all ${
                 activeTab === 'whatsapp'
                   ? 'bg-brand-gradient text-white shadow-brand-icon'
                   : 'bg-soft-bg text-soft-ink'
@@ -71,9 +72,10 @@ export function BotConfigTabs({
             id="tab-chatwoot"
             role="tab"
             aria-selected={activeTab === 'chatwoot'}
+            aria-controls="panel-chatwoot"
             type="button"
             onClick={() => setActiveTab('chatwoot')}
-            className={`inline-flex flex-none items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-all ${
+            className={`inline-flex min-h-[40px] flex-none items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-all ${
               activeTab === 'chatwoot'
                 ? 'bg-brand-gradient text-white shadow-brand-icon'
                 : 'bg-soft-bg text-soft-ink'
@@ -90,9 +92,10 @@ export function BotConfigTabs({
             id="tab-schedule"
             role="tab"
             aria-selected={activeTab === 'schedule'}
+            aria-controls="panel-schedule"
             type="button"
             onClick={() => setActiveTab('schedule')}
-            className={`inline-flex flex-none items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-all ${
+            className={`inline-flex min-h-[40px] flex-none items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-extrabold transition-all ${
               activeTab === 'schedule'
                 ? 'bg-brand-gradient text-white shadow-brand-icon'
                 : 'bg-soft-bg text-soft-ink'
@@ -109,28 +112,34 @@ export function BotConfigTabs({
       </div>
 
       {!isChatwootOnlyBot && activeTab === 'whatsapp' ? (
-        <BotWhatsAppTab
-          selectedBot={selectedBot}
-          onBotUpdated={onBotUpdated}
-          onFeedback={onFeedback}
-        />
+        <div role="tabpanel" id="panel-whatsapp" aria-labelledby="tab-whatsapp">
+          <BotWhatsAppTab
+            selectedBot={selectedBot}
+            onBotUpdated={onBotUpdated}
+            onFeedback={onFeedback}
+          />
+        </div>
       ) : null}
 
       {activeTab === 'chatwoot' ? (
-        <BotChatwootTab
-          selectedBot={selectedBot}
-          onBotUpdated={onBotUpdated}
-          onFeedback={onFeedback}
-        />
+        <div role="tabpanel" id="panel-chatwoot" aria-labelledby="tab-chatwoot">
+          <BotChatwootTab
+            selectedBot={selectedBot}
+            onBotUpdated={onBotUpdated}
+            onFeedback={onFeedback}
+          />
+        </div>
       ) : null}
 
       {activeTab === 'schedule' ? (
-        <BotScheduleFaqTab
-          selectedBot={selectedBot}
-          flows={flows}
-          onBotUpdated={onBotUpdated}
-          onFeedback={onFeedback}
-        />
+        <div role="tabpanel" id="panel-schedule" aria-labelledby="tab-schedule">
+          <BotScheduleFaqTab
+            selectedBot={selectedBot}
+            flows={flows}
+            onBotUpdated={onBotUpdated}
+            onFeedback={onFeedback}
+          />
+        </div>
       ) : null}
     </section>
   );

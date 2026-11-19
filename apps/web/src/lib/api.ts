@@ -20,7 +20,6 @@ import {
   OrganizationUserDto,
   OutboundWebhookConfigDto,
   OutboundWebhookConfigInput,
-  RegisterInput,
   ResetPasswordInput,
   SaveFlowGraphInput,
   UpdateBotInput,
@@ -130,22 +129,10 @@ async function performRequest<T>(
 }
 
 export const authApi = {
-  register: (input: RegisterInput) =>
-    performRequest<AuthSessionResponse>('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify(input)
-    }),
-
   login: (input: LoginInput) =>
     performRequest<AuthSessionResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(input)
-    }),
-
-  refresh: (refreshToken: string) =>
-    performRequest<AuthSessionResponse>('/auth/refresh', {
-      method: 'POST',
-      body: JSON.stringify({ refreshToken })
     }),
 
   logout: (refreshToken: string) =>

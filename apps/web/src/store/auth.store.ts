@@ -34,10 +34,7 @@ function loadPersistedSession(): {
       accessToken: string;
       refreshToken: string;
     };
-    if (
-      !parsed.accessToken ||
-      parsed.accessToken === 'demo-session-mode-active'
-    ) {
+    if (!parsed.accessToken) {
       localStorage.removeItem(STORAGE_AUTH_KEY);
       return { user: null, accessToken: null, refreshToken: null };
     }

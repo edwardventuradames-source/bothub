@@ -41,7 +41,7 @@ export function LoginPage() {
 
   return (
     <div className="relative flex min-h-screen flex-col justify-center bg-soft-bg p-4 sm:p-8">
-      <div className="mx-auto flex w-full max-w-5xl items-center justify-between pb-6">
+      <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3 pb-6">
         <div className="flex items-center gap-2.5 text-base font-bold text-soft-ink">
           <i className="grid h-9 w-9 place-items-center rounded-xl bg-brand-gradient text-white not-italic shadow-brand-icon">
             🤖
@@ -52,7 +52,7 @@ export function LoginPage() {
         <button
           type="button"
           onClick={toggleLightDark}
-          className="rounded-xl border border-soft-line bg-soft-card px-3.5 py-2 text-xs font-bold text-soft-ink shadow-soft transition-transform hover:-translate-y-0.5"
+          className="min-h-[44px] rounded-xl border border-soft-line bg-soft-card px-3.5 py-2 text-xs font-bold text-soft-ink shadow-soft transition-transform hover:-translate-y-0.5"
         >
           {resolvedTheme === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}
         </button>
@@ -149,7 +149,7 @@ export function LoginPage() {
                   aria-label={
                     showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'
                   }
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-soft-muted hover:text-soft-ink"
+                  className="absolute right-1.5 top-1/2 grid min-h-[40px] min-w-[40px] -translate-y-1/2 place-items-center rounded-md p-1 text-soft-muted hover:text-soft-ink"
                 >
                   {showPassword ? (
                     <EyeOff className="h-4 w-4" />
@@ -186,7 +186,7 @@ export function LoginPage() {
           className="relative hidden flex-col justify-between overflow-hidden bg-brand-gradient p-10 text-white lg:flex"
         >
           <div className="relative z-10">
-            <span className="inline-block rounded-full bg-white/20 px-3 py-1 text-[11px] font-bold uppercase tracking-wider backdrop-blur-xs">
+            <span className="inline-block rounded-full bg-white/20 px-3 py-1 text-[11px] font-bold uppercase tracking-wider backdrop-blur-sm">
               WhatsApp + Chatwoot Engine
             </span>
             <h2 className="mt-4 text-2xl font-extrabold leading-snug">
@@ -201,7 +201,7 @@ export function LoginPage() {
             <div className="float-bot-3d text-[92px]">🤖</div>
           </div>
 
-          <div className="relative z-10 rounded-2xl bg-black/20 p-4 backdrop-blur-xs">
+          <div className="relative z-10 rounded-2xl bg-black/20 p-4 backdrop-blur-sm">
             <div className="flex items-center gap-2 text-xs font-bold">
               <span className="dot-online h-2.5 w-2.5 rounded-full bg-[#82d616]" />
               <span>Cifrado AES-256-GCM & Multi-Sesión en Tiempo Real</span>

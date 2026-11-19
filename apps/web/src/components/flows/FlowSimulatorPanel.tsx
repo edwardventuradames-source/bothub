@@ -112,6 +112,21 @@ export function FlowSimulatorPanel({
             null
         );
       }
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          sender: 'bot',
+          text: `Error simulando paso: ${
+            err instanceof Error ? err.message : 'Fallo de red o flujo inválido'
+          }`,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+        }
+      ]);
     } finally {
       setIsSending(false);
     }
@@ -153,18 +168,18 @@ export function FlowSimulatorPanel({
   }
 
   return (
-    <div className="flex h-full flex-col justify-between rounded-2xl border border-soft-line bg-soft-card p-4 shadow-soft">
-      <div>
-        <div className="flex items-center justify-between border-b border-soft-line pb-3">
-          <div className="flex items-center gap-2">
-            <span className="grid h-8 w-8 place-items-center rounded-xl bg-brand-gradient text-white shadow-brand-icon">
+    <div className="flex h-full min-h-0 min-w-0 flex-col justify-between overflow-y-auto rounded-2xl border border-soft-line bg-soft-card p-4 shadow-soft">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-soft-line pb-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-brand-gradient text-white shadow-brand-icon">
               <Bot className="h-4 w-4" />
             </span>
-            <div>
-              <h3 className="text-xs font-extrabold text-soft-ink">
+            <div className="min-w-0">
+              <h3 className="truncate text-xs font-extrabold text-soft-ink">
                 Probador en Vivo (WhatsApp Sandbox)
               </h3>
-              <p className="text-[11px] text-soft-muted">
+              <p className="truncate text-[11px] text-soft-muted">
                 Ejecución real del motor de grafos
               </p>
             </div>
@@ -174,14 +189,14 @@ export function FlowSimulatorPanel({
             type="button"
             onClick={handleResetSession}
             title="Reiniciar sesión de prueba"
-            className="inline-flex items-center gap-1 rounded-lg border border-soft-line bg-soft-bg px-2.5 py-1 text-[11px] font-bold text-soft-ink hover:border-soft-blue"
+            className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-lg border border-soft-line bg-soft-bg px-2.5 py-1 text-[11px] font-bold text-soft-ink hover:border-soft-blue"
           >
             <RotateCcw className="h-3 w-3" />
             <span>Reiniciar</span>
           </button>
         </div>
 
-        <div className="mt-3 flex h-64 flex-col gap-2.5 overflow-y-auto rounded-xl bg-soft-bg p-3">
+        <div className="mt-3 flex h-56 flex-col gap-2.5 overflow-y-auto rounded-xl bg-soft-bg p-3">
           {messages.map((msg) => (
             <div
               key={msg.id}
@@ -260,13 +275,13 @@ export function FlowSimulatorPanel({
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Escribe aquí (ej: hola, 1020458912, 1)..."
-            className="flex-1 rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink focus:border-soft-blue focus:outline-none"
+            className="min-w-0 flex-1 rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink focus:border-soft-blue focus:outline-none"
           />
           <button
             type="submit"
             disabled={isSending}
             aria-label="Enviar mensaje de prueba"
-            className="inline-flex items-center gap-1 rounded-xl bg-brand-gradient px-3.5 py-2 text-xs font-extrabold text-white shadow-brand-icon"
+            className="inline-flex min-h-[38px] min-w-[38px] shrink-0 items-center justify-center gap-1 rounded-xl bg-brand-gradient px-3.5 py-2 text-xs font-extrabold text-white shadow-brand-icon disabled:opacity-60"
           >
             <Send className="h-3.5 w-3.5" />
           </button>

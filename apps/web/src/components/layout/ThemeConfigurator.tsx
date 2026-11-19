@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, Moon, Sun, X } from 'lucide-react';
 import {
@@ -59,13 +60,26 @@ export function ThemeConfigurator() {
     setConfiguratorOpen
   } = useThemeStore();
 
+  useEffect(() => {
+    if (!isConfiguratorOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setConfiguratorOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isConfiguratorOpen, setConfiguratorOpen]);
+
   return (
     <>
       <button
         type="button"
         onClick={() => setConfiguratorOpen(!isConfiguratorOpen)}
         aria-label="Cambiar tema y configuración visual"
-        className="fixed right-5 bottom-5 z-40 grid h-12 w-12 place-items-center rounded-full border-0 bg-soft-card text-lg text-soft-ink shadow-soft transition-transform duration-300 hover:rotate-90"
+        className="fixed right-5 bottom-5 z-40 grid h-11 w-11 place-items-center rounded-full border border-soft-line bg-soft-card text-lg text-soft-ink shadow-soft transition-transform duration-300 hover:rotate-90"
       >
         ⚙
       </button>
@@ -78,14 +92,17 @@ export function ThemeConfigurator() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setConfiguratorOpen(false)}
-              className="fixed inset-0 bg-black/30 backdrop-blur-xs"
+              className="fixed inset-0 bg-black/30 backdrop-blur-sm"
             />
             <motion.aside
+              role="dialog"
+              aria-modal="true"
+              aria-label="Configurador Soft UI"
               initial={{ x: 340, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 340, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-              className="relative z-10 flex h-full w-80 flex-col justify-between bg-soft-card p-6 shadow-2xl"
+              className="relative z-10 flex h-full w-80 max-w-full flex-col justify-between bg-soft-card p-6 shadow-2xl"
             >
               <div>
                 <div className="flex items-start justify-between border-b border-soft-line pb-4">
@@ -101,7 +118,7 @@ export function ThemeConfigurator() {
                     type="button"
                     onClick={() => setConfiguratorOpen(false)}
                     aria-label="Cerrar configurador"
-                    className="rounded-lg p-1 text-soft-muted hover:text-soft-ink"
+                    className="grid min-h-[44px] min-w-[44px] place-items-center rounded-lg p-1 text-soft-muted hover:text-soft-ink"
                   >
                     <X className="h-4 w-4" />
                   </button>

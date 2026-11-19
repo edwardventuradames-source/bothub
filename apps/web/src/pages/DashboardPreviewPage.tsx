@@ -1,9 +1,22 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from 'recharts';
+import { BotConnectionStatus, DashboardMetricsDto } from '@bothub/shared';
 import { AnimatedCounter } from '../components/ui/AnimatedCounter.js';
 import { botsApi, platformApi } from '../lib/api.js';
 import { cn } from '../lib/utils.js';
+import { useAuthStore } from '../store/auth.store.js';
 
 interface KpiItem {
   id: string;
@@ -19,7 +32,7 @@ interface DashboardBotCard {
   name: string;
   subtitle: string;
   statusLabel: string;
-  statusType: 'online' | 'qr' | 'off';
+  statusType: 'online' | 'qr' | 'err' | 'off';
   metaText: string;
   isEnabled: boolean;
 }
@@ -59,8 +72,6 @@ const EMPTY_KPI_ITEMS: KpiItem[] = [
   }
 ];
 
-const BAR_HEIGHT_PERCENTAGES = [15, 15, 15, 15, 15, 15, 15, 15, 15];
-
 const FLOW_PREVIEW_NODES = [
   { id: 'start', label: '▶ Inicio', isPrimary: true },
   { id: 'welcome', label: '💬 Bienvenida', isPrimary: false },
@@ -70,38 +81,68 @@ const FLOW_PREVIEW_NODES = [
   { id: 'handoff', label: '🎧 Transferir a agente', isPrimary: false }
 ];
 
+function getDriverLabel(driver: 'CHATWOOT' | 'BAILEYS' | 'CLOUD_API'): string {
+  if (driver === 'CHATWOOT') return 'Chatwoot';
+  if (driver === 'BAILEYS') return 'Baileys QR';
+  return 'Cloud API';
+}
+
+function getStatusMeta(status: BotConnectionStatus): {
+  label: string;
+  type: 'online' | 'qr' | 'err' | 'off';
+  isEnabled: boolean;
+} {
+  if (status === 'CONNECTED') {
+    return { label: 'En línea', type: 'online', isEnabled: true };
+  }
+  if (status === 'WAITING_QR') {
+    return { label: 'Esperando QR', type: 'qr', isEnabled: true };
+  }
+  if (status === 'RECONNECTING') {
+    return { label: 'Reconectando', type: 'qr', isEnabled: true };
+  }
+  if (status === 'ERROR') {
+    return { label: 'Error', type: 'err', isEnabled: false };
+  }
+  if (status === 'PAUSED') {
+    return { label: 'Pausado', type: 'off', isEnabled: false };
+  }
+  return { label: 'Desconectado', type: 'off', isEnabled: false };
+}
+
 export function DashboardPreviewPage() {
+  const user = useAuthStore((s) => s.user);
+  const canOperateBots = user?.role === 'ADMIN' || user?.role === 'OPERATOR';
+
   const [kpis, setKpis] = useState<KpiItem[]>(EMPTY_KPI_ITEMS);
   const [bots, setBots] = useState<DashboardBotCard[]>([]);
+  const [metrics, setMetrics] = useState<DashboardMetricsDto | null>(null);
+  const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const [togglingBotId, setTogglingBotId] = useState<string | null>(null);
 
   useEffect(() => {
     async function syncLiveMetrics(): Promise<void> {
       try {
         const data = await platformApi.getDashboard();
+        setMetrics(data.metrics);
+        setErrorBanner(null);
         setBots(
-          data.bots.map((b) => ({
-            id: b.id,
-            name: b.name,
-            subtitle: `${b.driver === 'BAILEYS' ? 'Baileys' : 'Cloud API'} · ${
-              b.chatwootConfig
-                ? `Chatwoot inbox #${b.chatwootConfig.inboxId}`
-                : b.phoneNumber || 'Sin número'
-            }`,
-            statusLabel:
-              b.status === 'CONNECTED'
-                ? 'En línea'
-                : b.status === 'WAITING_QR'
-                  ? 'Esperando QR'
-                  : 'Pausado',
-            statusType:
-              b.status === 'CONNECTED'
-                ? 'online'
-                : b.status === 'WAITING_QR'
-                  ? 'qr'
-                  : 'off',
-            metaText: `${b.messagesToday.toLocaleString()} msgs hoy`,
-            isEnabled: b.status !== 'PAUSED' && b.status !== 'DISCONNECTED'
-          }))
+          data.bots.map((b) => {
+            const statusMeta = getStatusMeta(b.status);
+            return {
+              id: b.id,
+              name: b.name,
+              subtitle: `${getDriverLabel(b.driver)} · ${
+                b.chatwootConfig
+                  ? `Chatwoot inbox #${b.chatwootConfig.inboxId}`
+                  : b.phoneNumber || 'Sin número'
+              }`,
+              statusLabel: statusMeta.label,
+              statusType: statusMeta.type,
+              metaText: `${b.messagesToday.toLocaleString()} msgs hoy`,
+              isEnabled: statusMeta.isEnabled
+            };
+          })
         );
 
         setKpis([
@@ -125,7 +166,7 @@ export function DashboardPreviewPage() {
             id: 'active-conversations',
             label: 'Conversaciones activas',
             value: data.metrics.activeConversations,
-            variation: 'En vivo',
+            variation: `${data.metrics.automationRatePercent}% auto`,
             isPositive: true,
             emoji: '👥'
           },
@@ -138,37 +179,67 @@ export function DashboardPreviewPage() {
             emoji: '🎧'
           }
         ]);
-      } catch {
-        void 0;
+      } catch (err) {
+        setErrorBanner(
+          err instanceof Error
+            ? err.message
+            : 'No se pudieron sincronizar las métricas en vivo.'
+        );
       }
     }
     void syncLiveMetrics();
   }, []);
 
   async function handleToggleBot(botId: string): Promise<void> {
-    setBots((current) =>
-      current.map((bot) => {
-        if (bot.id !== botId) {
-          return bot;
-        }
-        const nextEnabled = !bot.isEnabled;
-        return {
-          ...bot,
-          isEnabled: nextEnabled,
-          statusType: nextEnabled ? 'online' : 'off',
-          statusLabel: nextEnabled ? 'En línea' : 'Pausado'
-        };
-      })
-    );
+    if (!canOperateBots || togglingBotId) return;
+    setTogglingBotId(botId);
+    setErrorBanner(null);
     try {
-      await botsApi.togglePause(botId);
-    } catch {
-      void 0;
+      const { bot } = await botsApi.togglePause(botId);
+      const statusMeta = getStatusMeta(bot.status);
+      setBots((current) =>
+        current.map((item) =>
+          item.id === botId
+            ? {
+                ...item,
+                statusLabel: statusMeta.label,
+                statusType: statusMeta.type,
+                isEnabled: statusMeta.isEnabled
+              }
+            : item
+        )
+      );
+    } catch (err) {
+      setErrorBanner(
+        err instanceof Error
+          ? err.message
+          : 'No se pudo cambiar el estado del bot.'
+      );
+    } finally {
+      setTogglingBotId(null);
     }
   }
 
+  const hourlyData = metrics?.hourlyMessages ?? [];
+  const weeklyData = metrics?.weeklyFlowPerformance ?? [];
+  const hasWeeklyTraffic = weeklyData.some(
+    (item) => item.resolvedByBot > 0 || item.transferredToAgent > 0
+  );
+  const hasHourlyTraffic = hourlyData.some(
+    (item) => item.inbound > 0 || item.outbound > 0
+  );
+
   return (
     <div className="flex flex-col gap-6">
+      {errorBanner ? (
+        <div
+          role="alert"
+          className="rounded-2xl border border-soft-danger/30 bg-soft-danger/10 px-4 py-3 text-xs font-bold text-soft-danger"
+        >
+          {errorBanner}
+        </div>
+      ) : null}
+
       <section
         aria-label="Indicadores clave de rendimiento"
         className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4"
@@ -182,7 +253,7 @@ export function DashboardPreviewPage() {
             whileHover={{ y: -4 }}
             className="soft-card flex items-center justify-between p-4"
           >
-            <div>
+            <div className="min-w-0">
               <span className="text-[13px] font-semibold text-soft-muted">
                 {kpi.label}
               </span>
@@ -191,14 +262,14 @@ export function DashboardPreviewPage() {
                 <span
                   className={cn(
                     'ml-1.5 text-xs font-bold',
-                    kpi.isPositive ? 'text-[#82d616]' : 'text-[#ea0606]'
+                    kpi.isPositive ? 'text-[#4b830d] dark:text-[#82d616]' : 'text-[#ea0606]'
                   )}
                 >
                   {kpi.variation}
                 </span>
               </strong>
             </div>
-            <div className="grid h-12 w-12 place-items-center rounded-xl bg-brand-gradient text-xl text-white shadow-brand-icon">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-brand-gradient text-xl text-white shadow-brand-icon">
               {kpi.emoji}
             </div>
           </motion.div>
@@ -224,7 +295,7 @@ export function DashboardPreviewPage() {
             </p>
             <Link
               to="/bots"
-              className="mt-auto pt-4 text-sm font-bold text-soft-muted transition-colors hover:text-soft-ink"
+              className="mt-auto inline-flex min-h-[44px] items-center pt-4 text-sm font-bold text-soft-blue transition-colors hover:underline"
             >
               Crear bot →
             </Link>
@@ -251,7 +322,7 @@ export function DashboardPreviewPage() {
             </div>
             <Link
               to="/flows"
-              className="text-sm font-bold text-white transition-transform hover:translate-x-1"
+              className="inline-flex min-h-[44px] items-center text-sm font-bold text-white transition-transform hover:translate-x-1"
             >
               Ver flujos →
             </Link>
@@ -264,28 +335,61 @@ export function DashboardPreviewPage() {
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, delay: 0.32 }}
-          className="soft-card p-4"
+          className="soft-card flex flex-col p-4"
         >
-          <div className="flex h-[170px] items-end justify-around rounded-[14px] bg-dark-gradient p-4">
-            {BAR_HEIGHT_PERCENTAGES.map((heightPct, idx) => (
-              <motion.i
-                key={idx}
-                initial={{ height: 0 }}
-                animate={{ height: `${heightPct}%` }}
-                transition={{
-                  duration: 0.85,
-                  delay: 0.3 + idx * 0.07,
-                  ease: 'easeOut'
-                }}
-                className="w-1.5 rounded-md bg-white"
-              />
-            ))}
+          <div className="h-[190px] w-full rounded-[14px] bg-dark-gradient p-3">
+            {hasWeeklyTraffic ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={weeklyData}>
+                  <XAxis
+                    dataKey="day"
+                    stroke="#cbd5e1"
+                    tick={{ fill: '#cbd5e1', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    stroke="#cbd5e1"
+                    tick={{ fill: '#cbd5e1', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={28}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1a2035',
+                      border: '1px solid #2a3350',
+                      borderRadius: '10px',
+                      color: '#f1f5f9',
+                      fontSize: '12px'
+                    }}
+                  />
+                  <Bar
+                    dataKey="resolvedByBot"
+                    name="Bot"
+                    fill="#21d4fd"
+                    radius={[6, 6, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="transferredToAgent"
+                    name="Handoff"
+                    fill="#82d616"
+                    radius={[6, 6, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="grid h-full place-items-center text-center text-xs font-semibold text-white/80">
+                Sin conversaciones registradas esta semana todavía.
+              </div>
+            )}
           </div>
           <h4 className="mt-4 mb-0.5 text-[15px] font-bold text-soft-ink">
-            Actividad de sesiones
+            Rendimiento semanal de conversaciones
           </h4>
           <small className="text-xs text-soft-muted">
-            Métricas en tiempo real de tus bots activos
+            Resueltas por bot vs. transferidas a agente humano
           </small>
         </motion.div>
 
@@ -293,32 +397,67 @@ export function DashboardPreviewPage() {
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, delay: 0.38 }}
-          className="soft-card p-4"
+          className="soft-card flex flex-col p-4"
         >
           <h4 className="m-0 text-[15px] font-bold text-soft-ink">
-            Tráfico de mensajes
+            Tráfico de mensajes (últimas 24h)
           </h4>
           <small className="text-xs font-semibold text-soft-muted">
-            Sincronización WhatsApp ↔ Chatwoot
+            Entrantes (WhatsApp / Chatwoot) vs. salientes del bot
           </small>
-          <svg
-            viewBox="0 0 600 220"
-            width="100%"
-            className="mt-2 overflow-visible"
-            role="img"
-            aria-label="Gráfica de líneas de resumen de mensajes"
-          >
-            <g stroke="var(--line)" strokeDasharray="4">
-              <path d="M30 20H590M30 70H590M30 120H590M30 170H590M30 200H590" />
-            </g>
-            <path
-              className="svg-line-animated"
-              d="M30 200H590"
-              fill="none"
-              stroke="#17c1e8"
-              strokeWidth="3"
-            />
-          </svg>
+          <div className="mt-3 h-[200px] w-full">
+            {hasHourlyTraffic ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={hourlyData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fill: 'var(--mut)', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    tick={{ fill: 'var(--mut)', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={28}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'var(--card)',
+                      border: '1px solid var(--line)',
+                      borderRadius: '10px',
+                      color: 'var(--ink)',
+                      fontSize: '12px'
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="inbound"
+                    name="Entrantes"
+                    stroke="#2152ff"
+                    fill="#2152ff"
+                    fillOpacity={0.18}
+                    strokeWidth={2.5}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="outbound"
+                    name="Salientes"
+                    stroke="#17c1e8"
+                    fill="#17c1e8"
+                    fillOpacity={0.14}
+                    strokeWidth={2.5}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="grid h-full place-items-center rounded-xl border border-dashed border-soft-line bg-soft-bg px-4 text-center text-xs text-soft-muted">
+                Aún no hay tráfico de mensajes en las últimas 24 horas. Envía un mensaje de prueba desde el simulador o webhook para ver la serie en vivo.
+              </div>
+            )}
+          </div>
         </motion.div>
       </section>
 
@@ -335,13 +474,13 @@ export function DashboardPreviewPage() {
             </div>
             <Link
               to="/bots"
-              className="rounded-xl bg-brand-gradient px-4 py-2.5 text-xs font-extrabold text-white shadow-brand-icon"
+              className="inline-flex min-h-[44px] items-center rounded-xl bg-brand-gradient px-4 py-2.5 text-xs font-extrabold text-white shadow-brand-icon"
             >
               + Crear mi primer Bot
             </Link>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
             {bots.map((bot, idx) => (
               <motion.div
                 key={bot.id}
@@ -349,12 +488,12 @@ export function DashboardPreviewPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4, delay: 0.42 + idx * 0.06 }}
                 whileHover={{ y: -4 }}
-                className="soft-card p-4"
+                className="soft-card min-w-0 p-4"
               >
-                <h4 className="m-0 mb-0.5 text-[15px] font-bold text-soft-ink">
+                <h4 className="m-0 mb-0.5 truncate text-[15px] font-bold text-soft-ink">
                   {bot.name}
                 </h4>
-                <small className="block text-xs text-soft-muted">
+                <small className="block truncate text-xs text-soft-muted">
                   {bot.subtitle}
                 </small>
 
@@ -364,6 +503,7 @@ export function DashboardPreviewPage() {
                       'h-2 w-2 rounded-full',
                       bot.statusType === 'online' && 'dot-online bg-[#82d616]',
                       bot.statusType === 'qr' && 'bg-[#fb8c00]',
+                      bot.statusType === 'err' && 'bg-[#ea0606]',
                       bot.statusType === 'off' && 'bg-[#adb5bd]'
                     )}
                   />
@@ -375,18 +515,19 @@ export function DashboardPreviewPage() {
                   <button
                     type="button"
                     role="switch"
+                    disabled={!canOperateBots || togglingBotId === bot.id}
                     aria-checked={bot.isEnabled}
                     aria-label={`Alternar estado de ${bot.name}`}
                     onClick={() => void handleToggleBot(bot.id)}
                     className={cn(
-                      'relative h-5 w-9 cursor-pointer rounded-full border-0 transition-colors duration-200',
+                      'relative h-6 w-10 cursor-pointer rounded-full border-0 transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50',
                       bot.isEnabled ? 'bg-brand-gradient' : 'bg-[#ced4da]'
                     )}
                   >
                     <span
                       className={cn(
-                        'absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all duration-200',
-                        bot.isEnabled ? 'right-0.5' : 'right-[18px]'
+                        'absolute top-1 h-4 w-4 rounded-full bg-white transition-all duration-200',
+                        bot.isEnabled ? 'right-1' : 'right-[20px]'
                       )}
                     />
                   </button>
@@ -403,13 +544,13 @@ export function DashboardPreviewPage() {
         transition={{ duration: 0.45, delay: 0.56 }}
         className="soft-card p-4"
       >
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h4 className="m-0 text-[15px] font-bold text-soft-ink">
             Constructor de Flujos Conversacionales
           </h4>
           <Link
             to="/flows"
-            className="text-xs font-extrabold text-soft-blue hover:underline"
+            className="inline-flex min-h-[40px] items-center text-xs font-extrabold text-soft-blue hover:underline"
           >
             Abrir Constructor Visual →
           </Link>

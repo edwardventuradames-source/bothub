@@ -140,25 +140,36 @@ export const FLOW_NODE_PALETTE: PaletteNodeOption[] = [
   }
 ];
 
+export function getFlowNodeAccentColor(nodeType: FlowNodeType): string {
+  const paletteItem = FLOW_NODE_PALETTE.find((p) => p.type === nodeType);
+  return paletteItem?.badgeColor ?? '#2152ff';
+}
+
+export function buildFlowNodeLabel(
+  nodeType: FlowNodeType,
+  data: Record<string, unknown>
+): string {
+  const title = String(data.title || nodeType);
+  const preview = String(
+    data.text ||
+      data.promptText ||
+      data.bodyText ||
+      data.keyword ||
+      data.url ||
+      data.clientMessage ||
+      data.farewellMessage ||
+      ''
+  ).slice(0, 48);
+  return `[${nodeType}] ${title}${preview ? ` — ${preview}` : ''}`;
+}
+
 export function mapFlowNodesToReactFlow(
   flowNodes: FlowNode[],
   highlightedNodeId: string | null
 ): Node[] {
   return flowNodes.map((fn) => {
-    const paletteItem = FLOW_NODE_PALETTE.find((p) => p.type === fn.type);
-    const accentColor = paletteItem?.badgeColor ?? '#2152ff';
+    const accentColor = getFlowNodeAccentColor(fn.type);
     const isHighlighted = highlightedNodeId === fn.id;
-    const title = String(fn.data.title || fn.type);
-    const preview = String(
-      fn.data.text ||
-        fn.data.promptText ||
-        fn.data.bodyText ||
-        fn.data.keyword ||
-        fn.data.url ||
-        fn.data.clientMessage ||
-        fn.data.farewellMessage ||
-        ''
-    ).slice(0, 48);
 
     return {
       id: fn.id,
@@ -166,7 +177,7 @@ export function mapFlowNodesToReactFlow(
       data: {
         ...fn.data,
         nodeType: fn.type,
-        label: `[${fn.type}] ${title}${preview ? ` — ${preview}` : ''}`
+        label: buildFlowNodeLabel(fn.type, fn.data)
       },
       style: {
         borderRadius: '14px',

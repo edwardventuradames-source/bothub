@@ -175,8 +175,9 @@ export function InteractiveOptionsInspector({
                     <button
                       type="button"
                       onClick={() => handleRemoveButton(btn.id)}
+                      aria-label={`Eliminar botón ${idx + 1}`}
                       title="Eliminar botón"
-                      className="rounded p-0.5 text-soft-danger hover:bg-soft-danger/10"
+                      className="grid min-h-[32px] min-w-[32px] place-items-center rounded p-1 text-soft-danger hover:bg-soft-danger/10"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -191,7 +192,7 @@ export function InteractiveOptionsInspector({
                   className="w-full rounded-lg border border-soft-line bg-soft-bg px-2.5 py-1.5 text-xs font-bold text-soft-ink"
                 />
                 {charCount > 20 ? (
-                  <span className="text-[10px] font-semibold text-soft-warn">
+                  <span className="text-[10px] font-semibold text-soft-warning">
                     WhatsApp Cloud API recorta títulos mayores a 20 caracteres.
                   </span>
                 ) : null}
@@ -306,8 +307,9 @@ export function InteractiveOptionsInspector({
                   <button
                     type="button"
                     onClick={() => handleRemoveListItem(item.id)}
+                    aria-label={`Eliminar opción ${idx + 1}`}
                     title="Eliminar opción"
-                    className="rounded p-0.5 text-soft-danger hover:bg-soft-danger/10"
+                    className="grid min-h-[32px] min-w-[32px] place-items-center rounded p-1 text-soft-danger hover:bg-soft-danger/10"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -315,6 +317,7 @@ export function InteractiveOptionsInspector({
               </div>
               <input
                 type="text"
+                aria-label={`Título de la opción ${idx + 1}`}
                 maxLength={24}
                 value={item.title}
                 onChange={(e) => handleListItemChange(idx, 'title', e.target.value)}
@@ -323,6 +326,7 @@ export function InteractiveOptionsInspector({
               />
               <input
                 type="text"
+                aria-label={`Descripción de la opción ${idx + 1}`}
                 maxLength={72}
                 value={item.description ?? ''}
                 onChange={(e) =>
@@ -332,6 +336,7 @@ export function InteractiveOptionsInspector({
                 className="w-full rounded-lg border border-soft-line bg-soft-bg px-2.5 py-1 text-[11px] text-soft-ink"
               />
               <select
+                aria-label={`Nodo destino para la opción ${idx + 1}`}
                 value={targetId}
                 onChange={(e) =>
                   onSetBranchEdge(

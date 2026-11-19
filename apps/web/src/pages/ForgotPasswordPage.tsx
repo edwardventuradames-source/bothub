@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, KeyRound, Lock, Mail } from 'lucide-react';
@@ -13,6 +13,15 @@ export function ForgotPasswordPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const redirectTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current !== null) {
+        window.clearTimeout(redirectTimerRef.current);
+      }
+    };
+  }, []);
 
   async function handleRequestReset(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -31,10 +40,9 @@ export function ForgotPasswordPage() {
       if (error instanceof ApiRequestError) {
         setErrorMessage(error.message);
       } else {
-        setStatusMessage(
-          'Modo demostración: ingresa un código temporal para simular el cambio de contraseña.'
+        setErrorMessage(
+          'No se pudo conectar con el servidor para solicitar el restablecimiento.'
         );
-        setStep('reset');
       }
     } finally {
       setIsLoading(false);
@@ -49,7 +57,7 @@ export function ForgotPasswordPage() {
     try {
       const response = await authApi.resetPassword({ token, newPassword });
       setStatusMessage(response.message);
-      setTimeout(() => navigate('/login'), 1500);
+      redirectTimerRef.current = window.setTimeout(() => navigate('/login'), 1500);
     } catch (error) {
       if (error instanceof ApiRequestError) {
         setErrorMessage(error.message);
@@ -135,7 +143,7 @@ export function ForgotPasswordPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full rounded-xl bg-brand-gradient py-3 text-xs font-bold uppercase tracking-wider text-white shadow-brand-icon"
+              className="min-h-[44px] w-full rounded-xl bg-brand-gradient py-3 text-xs font-bold uppercase tracking-wider text-white shadow-brand-icon disabled:opacity-60"
             >
               {isLoading ? 'Enviando…' : 'Enviar Instrucciones'}
             </button>
@@ -189,7 +197,7 @@ export function ForgotPasswordPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full rounded-xl bg-brand-gradient py-3 text-xs font-bold uppercase tracking-wider text-white shadow-brand-icon"
+              className="min-h-[44px] w-full rounded-xl bg-brand-gradient py-3 text-xs font-bold uppercase tracking-wider text-white shadow-brand-icon disabled:opacity-60"
             >
               {isLoading ? 'Actualizando…' : 'Guardar Nueva Contraseña'}
             </button>

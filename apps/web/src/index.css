@@ -39,7 +39,6 @@
   --ink: #f1f5f9;
   --mut: #9aa7bd;
   --line: #2a3350;
-  --dk: linear-gradient(310deg, #141727, #3a416f);
   --sh: 0 20px 27px rgba(0, 0, 0, 0.35);
 }
 
@@ -108,17 +107,6 @@ dialog::backdrop {
   background-color: var(--card);
   border-radius: 16px;
   box-shadow: var(--sh);
-}
-
-dialog:modal {
-  overscroll-behavior: contain;
-}
-
-dialog::backdrop {
-  overflow: hidden;
-  overscroll-behavior: contain;
-  background-color: rgba(20, 23, 39, 0.45);
-  backdrop-filter: blur(4px);
 }
 
 [role="tab"] {

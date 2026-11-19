@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   Bot,
@@ -21,21 +22,20 @@ interface NavItemConfig {
   to: string;
   label: string;
   icon: typeof LayoutGrid;
-  emoji: string;
 }
 
 const PRIMARY_NAV_ITEMS: NavItemConfig[] = [
-  { to: '/', label: 'Dashboard', icon: LayoutGrid, emoji: '▦' },
-  { to: '/bots', label: 'Bots', icon: Bot, emoji: '🤖' },
-  { to: '/flows', label: 'Flujos', icon: GitBranch, emoji: '⛓' },
-  { to: '/conversations', label: 'Conversaciones', icon: MessageSquare, emoji: '💬' },
-  { to: '/contacts', label: 'Contactos', icon: Users, emoji: '👥' }
+  { to: '/', label: 'Dashboard', icon: LayoutGrid },
+  { to: '/bots', label: 'Bots', icon: Bot },
+  { to: '/flows', label: 'Flujos', icon: GitBranch },
+  { to: '/conversations', label: 'Conversaciones', icon: MessageSquare },
+  { to: '/contacts', label: 'Contactos', icon: Users }
 ];
 
 const ACCOUNT_NAV_ITEMS: NavItemConfig[] = [
-  { to: '/logs', label: 'Logs', icon: FileText, emoji: '📜' },
-  { to: '/users', label: 'Usuarios', icon: KeyRound, emoji: '🔑' },
-  { to: '/settings', label: 'Configuración', icon: Settings, emoji: '⚙' }
+  { to: '/logs', label: 'Logs', icon: FileText },
+  { to: '/users', label: 'Usuarios', icon: KeyRound },
+  { to: '/settings', label: 'Configuración', icon: Settings }
 ];
 
 function SidebarContent({ onCloseMobile }: { onCloseMobile?: () => void }) {
@@ -53,7 +53,7 @@ function SidebarContent({ onCloseMobile }: { onCloseMobile?: () => void }) {
             type="button"
             onClick={onCloseMobile}
             aria-label="Cerrar menú lateral"
-            className="rounded-lg p-1.5 text-soft-muted hover:text-soft-ink lg:hidden"
+            className="grid min-h-[44px] min-w-[44px] place-items-center rounded-lg p-1.5 text-soft-muted hover:text-soft-ink lg:hidden"
           >
             <X className="h-5 w-5" />
           </button>
@@ -156,6 +156,19 @@ function SidebarContent({ onCloseMobile }: { onCloseMobile?: () => void }) {
 }
 
 export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onCloseMobile();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [mobileOpen, onCloseMobile]);
+
   return (
     <>
       <aside className="sticky top-4 hidden h-[calc(100vh-32px)] self-start lg:flex lg:flex-col">
@@ -163,9 +176,14 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
       </aside>
 
       {mobileOpen ? (
-        <div className="fixed inset-0 z-50 flex lg:hidden">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Menú de navegación"
+          className="fixed inset-0 z-50 flex lg:hidden"
+        >
           <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-xs"
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm"
             onClick={onCloseMobile}
           />
           <aside className="relative z-10 flex h-full w-[265px] flex-col bg-soft-bg p-4 shadow-2xl">

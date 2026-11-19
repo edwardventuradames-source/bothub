@@ -135,3 +135,15 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     set({ isConfiguratorOpen });
   }
 }));
+
+if (typeof window !== 'undefined') {
+  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  mediaQuery.addEventListener('change', () => {
+    const state = useThemeStore.getState();
+    if (state.preference === 'system') {
+      const resolvedTheme = resolveEffectiveTheme('system');
+      syncDocumentColorScheme('system', resolvedTheme, state.accentColor);
+      useThemeStore.setState({ resolvedTheme });
+    }
+  });
+}

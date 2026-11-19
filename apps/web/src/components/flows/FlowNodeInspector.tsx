@@ -43,8 +43,9 @@ export function FlowNodeInspector({
             <button
               type="button"
               onClick={onDeleteNode}
+              aria-label="Eliminar nodo seleccionado"
               title="Eliminar nodo seleccionado"
-              className="rounded-lg border border-soft-danger/30 bg-soft-danger/10 p-1.5 text-soft-danger"
+              className="grid min-h-[36px] min-w-[36px] place-items-center rounded-lg border border-soft-danger/30 bg-soft-danger/10 p-1.5 text-soft-danger"
             >
               <Trash2 className="h-4 w-4" />
             </button>
