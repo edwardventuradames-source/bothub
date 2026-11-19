@@ -27,6 +27,7 @@ export function BotChatwootTab({
   const [cwAccountId, setCwAccountId] = useState('1');
   const [cwInboxId, setCwInboxId] = useState('1');
   const [cwApiToken, setCwApiToken] = useState('');
+  const [cwUserApiToken, setCwUserApiToken] = useState('');
   const [cwWebhookToken, setCwWebhookToken] = useState('');
   const [cwReturnCommand, setCwReturnCommand] = useState('#bot');
   const [isSaving, setIsSaving] = useState(false);
@@ -39,12 +40,14 @@ export function BotChatwootTab({
       setCwInboxId(String(selectedBot.chatwootConfig.inboxId));
       setCwReturnCommand(selectedBot.chatwootConfig.handoffReturnCommand);
       setCwApiToken('');
+      setCwUserApiToken('');
       setCwWebhookToken('');
     } else {
       setCwBaseUrl('');
       setCwAccountId('1');
       setCwInboxId('1');
       setCwApiToken('');
+      setCwUserApiToken('');
       setCwReturnCommand('#bot');
       setCwWebhookToken(generateClientWebhookSecret());
     }
@@ -104,12 +107,14 @@ export function BotChatwootTab({
         accountId: parsedAccountId,
         inboxId: parsedInboxId,
         apiAccessToken: cwApiToken.trim(),
+        userApiAccessToken: cwUserApiToken.trim(),
         webhookToken: cwWebhookToken.trim(),
         handoffReturnCommand: cwReturnCommand.trim() || '#bot',
         isActive: true
       });
       onBotUpdated(bot);
       setCwApiToken('');
+      setCwUserApiToken('');
       onFeedback(
         'ok',
         'Bot conectado con Chatwoot y credenciales cifradas con AES-256-GCM.'
@@ -270,6 +275,28 @@ export function BotChatwootTab({
               }
               value={cwApiToken}
               onChange={(e) => setCwApiToken(e.target.value)}
+              className="w-full rounded-xl border border-soft-line bg-soft-card px-3.5 py-2 text-xs text-soft-ink"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="cw-user-api-token"
+              className="mb-1 block text-xs font-bold text-soft-ink"
+            >
+              Token de Usuario / Admin Chatwoot (Opcional · Para Etiquetas)
+            </label>
+            <input
+              id="cw-user-api-token"
+              name="userApiAccessToken"
+              type="password"
+              placeholder={
+                selectedBot.chatwootConfig?.hasUserApiAccessToken
+                  ? `Guardado (${selectedBot.chatwootConfig.maskedUserApiAccessToken}) · deja vacío para conservar`
+                  : 'Tu Access Token de Perfil en Chatwoot (necesario si el bot es Agent Bot)'
+              }
+              value={cwUserApiToken}
+              onChange={(e) => setCwUserApiToken(e.target.value)}
               className="w-full rounded-xl border border-soft-line bg-soft-card px-3.5 py-2 text-xs text-soft-ink"
             />
           </div>

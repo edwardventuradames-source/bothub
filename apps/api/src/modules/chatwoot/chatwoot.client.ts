@@ -1,4 +1,8 @@
-import { ChatwootConfigDto, FlowSimulationBotReply } from '@bothub/shared';
+import {
+  ChatwootConfigDto,
+  ChatwootLabelDto,
+  FlowSimulationBotReply
+} from '@bothub/shared';
 import {
   isBlockedHostnameOrIp,
   isSimulatedLocalHostname,
@@ -277,4 +281,137 @@ export function formatBotReplyForChatwoot(reply: FlowSimulationBotReply): string
   }
 
   return formatted;
+}
+
+export async function fetchChatwootAccountLabelsApi(params: {
+  config: ChatwootConfigDto;
+  apiAccessToken: string;
+}): Promise<ChatwootLabelDto[]> {
+  if (!shouldCallRemoteChatwoot(params.config.baseUrl)) {
+    return [];
+  }
+
+  const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/labels`;
+  const response = await pinnedSafeFetch(endpoint, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      api_access_token: params.apiAccessToken
+    },
+    timeoutMs: HTTP_TIMEOUT_MS
+  });
+
+  if (!response.ok) {
+    if (
+      response.status === 401 &&
+      response.text.toLowerCase().includes('not authorized for bots')
+    ) {
+      throw new Error(
+        'El token actual es de Agent Bot y Chatwoot restringe listar etiquetas a tokens de Usuario/Administrador. Agrega tu Token de Perfil de Chatwoot en el campo "Token de Usuario/Admin (para Etiquetas)" del bot.'
+      );
+    }
+    throw new Error(
+      `Chatwoot respondió HTTP ${response.status} al consultar etiquetas: ${response.text.slice(0, 180)}`
+    );
+  }
+
+  const parsed = JSON.parse(response.text || '{}') as {
+    payload?: Array<{
+      id?: number;
+      title?: string;
+      description?: string | null;
+      color?: string;
+    }>;
+  };
+
+  const rawLabels = Array.isArray(parsed.payload) ? parsed.payload : [];
+  return rawLabels
+    .filter((item) => typeof item.title === 'string' && item.title.trim().length > 0)
+    .map((item, idx) => ({
+      id: typeof item.id === 'number' ? item.id : idx + 1,
+      title: String(item.title).trim(),
+      description: typeof item.description === 'string' ? item.description : null,
+      color: typeof item.color === 'string' && item.color ? item.color : '#2152FF'
+    }));
+}
+
+export async function applyChatwootConversationLabelsApi(params: {
+  config: ChatwootConfigDto;
+  apiAccessToken: string;
+  conversationId: number;
+  labels: string[];
+}): Promise<{
+  applied: boolean;
+  labels: string[];
+  status?: number;
+  errorDetail?: string;
+}> {
+  const newLabels = Array.from(
+    new Set(params.labels.map((item) => item.trim()).filter(Boolean))
+  );
+  if (newLabels.length === 0) {
+    return { applied: false, labels: [], errorDetail: 'empty_labels' };
+  }
+
+  if (!shouldCallRemoteChatwoot(params.config.baseUrl, params.conversationId)) {
+    return { applied: false, labels: newLabels, errorDetail: 'skipped_local_url' };
+  }
+
+  const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/conversations/${params.conversationId}/labels`;
+  let existingLabels: string[] = [];
+
+  try {
+    const existingRes = await pinnedSafeFetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        api_access_token: params.apiAccessToken
+      },
+      timeoutMs: HTTP_TIMEOUT_MS
+    });
+    if (existingRes.ok) {
+      const parsedExisting = JSON.parse(existingRes.text || '{}') as {
+        payload?: unknown;
+      };
+      if (Array.isArray(parsedExisting.payload)) {
+        existingLabels = parsedExisting.payload
+          .filter((item): item is string => typeof item === 'string')
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+    }
+  } catch {
+    void 0;
+  }
+
+  const mergedLabels = Array.from(new Set([...existingLabels, ...newLabels]));
+
+  try {
+    const postRes = await pinnedSafeFetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        api_access_token: params.apiAccessToken
+      },
+      body: JSON.stringify({ labels: mergedLabels }),
+      timeoutMs: HTTP_TIMEOUT_MS
+    });
+
+    if (!postRes.ok) {
+      return {
+        applied: false,
+        labels: mergedLabels,
+        status: postRes.status,
+        errorDetail: `HTTP ${postRes.status}: ${postRes.text.slice(0, 220)}`
+      };
+    }
+
+    return { applied: true, labels: mergedLabels, status: postRes.status };
+  } catch (err) {
+    return {
+      applied: false,
+      labels: mergedLabels,
+      errorDetail: err instanceof Error ? err.message : 'Network error'
+    };
+  }
 }

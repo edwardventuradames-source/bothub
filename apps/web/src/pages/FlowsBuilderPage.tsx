@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import {
   BotDto,
+  ChatwootLabelDto,
   FlowDto,
   FlowEdge,
   FlowNode,
@@ -63,6 +64,9 @@ export function FlowsBuilderPage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [chatwootLabels, setChatwootLabels] = useState<ChatwootLabelDto[]>([]);
+  const [isLoadingLabels, setIsLoadingLabels] = useState(false);
+  const [labelsError, setLabelsError] = useState<string | null>(null);
 
   const [newFlowName, setNewFlowName] = useState('');
   const [newFlowDesc, setNewFlowDesc] = useState('');
@@ -80,6 +84,46 @@ export function FlowsBuilderPage() {
     () => nodes.find((n) => n.id === selectedNodeId) ?? null,
     [nodes, selectedNodeId]
   );
+
+  const linkedChatwootBot = useMemo(() => {
+    if (!activeFlow) return null;
+    const directBot = bots.find(
+      (b) => b.id === activeFlow.botId && Boolean(b.chatwootConfig)
+    );
+    if (directBot) return directBot;
+    const assignedBot = bots.find(
+      (b) => b.activeFlowId === activeFlow.id && Boolean(b.chatwootConfig)
+    );
+    if (assignedBot) return assignedBot;
+    return bots.find((b) => Boolean(b.chatwootConfig)) ?? null;
+  }, [activeFlow, bots]);
+
+  const fetchChatwootLabels = useCallback(async (botId: string) => {
+    setIsLoadingLabels(true);
+    setLabelsError(null);
+    try {
+      const res = await botsApi.listChatwootLabels(botId);
+      setChatwootLabels(res.labels);
+    } catch (err) {
+      setLabelsError(
+        err instanceof Error
+          ? err.message
+          : 'No se pudieron obtener las etiquetas de Chatwoot.'
+      );
+      setChatwootLabels([]);
+    } finally {
+      setIsLoadingLabels(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (linkedChatwootBot) {
+      void fetchChatwootLabels(linkedChatwootBot.id);
+    } else {
+      setChatwootLabels([]);
+      setLabelsError(null);
+    }
+  }, [linkedChatwootBot, fetchChatwootLabels]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<Node>[]) => {
@@ -658,6 +702,15 @@ export function FlowsBuilderPage() {
               selectedNode={selectedNode}
               allNodes={nodes}
               edges={edges}
+              chatwootLabels={chatwootLabels}
+              isLoadingChatwootLabels={isLoadingLabels}
+              chatwootLabelsError={labelsError}
+              hasLinkedChatwootBot={Boolean(linkedChatwootBot)}
+              onRefreshChatwootLabels={() => {
+                if (linkedChatwootBot) {
+                  void fetchChatwootLabels(linkedChatwootBot.id);
+                }
+              }}
               onUpdateData={updateSelectedNodeData}
               onSetBranchEdge={handleSetBranchEdge}
               onDeleteNode={handleDeleteSelectedNode}

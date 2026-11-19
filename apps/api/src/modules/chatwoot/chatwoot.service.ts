@@ -15,6 +15,7 @@ import {
   syncConversationStateToDb
 } from '../../lib/persistence.js';
 import {
+  fetchChatwootAccountLabelsApi,
   toggleChatwootConversationStatusApi,
   verifyChatwootConnectionApi
 } from './chatwoot.client.js';
@@ -84,8 +85,11 @@ export class ChatwootService {
   public static saveConfig(botId: string, input: ChatwootConfigInput) {
     const existingTokens = runtimeStore.getDecryptedChatwootTokens(botId);
     const trimmedApiToken = input.apiAccessToken?.trim() ?? '';
+    const trimmedUserToken = input.userApiAccessToken?.trim() ?? '';
     const trimmedWebhookToken = input.webhookToken?.trim() ?? '';
     const resolvedApiToken = trimmedApiToken || existingTokens?.apiAccessToken || '';
+    const resolvedUserToken =
+      trimmedUserToken || existingTokens?.userApiAccessToken || '';
     const resolvedWebhookToken =
       trimmedWebhookToken ||
       existingTokens?.webhookToken ||
@@ -101,13 +105,16 @@ export class ChatwootService {
     const resolvedInput: ChatwootConfigInput = {
       ...input,
       apiAccessToken: resolvedApiToken,
+      userApiAccessToken: resolvedUserToken,
       webhookToken: resolvedWebhookToken
     };
 
     runtimeStore.saveChatwootConfigForBot(botId, {
       ...resolvedInput,
       apiAccessToken: resolvedApiToken,
-      webhookToken: resolvedWebhookToken
+      userApiAccessToken: resolvedUserToken,
+      webhookToken: resolvedWebhookToken,
+      handoffReturnCommand: input.handoffReturnCommand || '#bot'
     });
     const dto = runtimeStore.getChatwootConfigDto(botId);
     const storedSecrets = runtimeStore.chatwootSecrets.get(botId);
@@ -226,6 +233,25 @@ export class ChatwootService {
 
       throw error;
     }
+  }
+
+  public static async listLabels(botId: string) {
+    const config = runtimeStore.getChatwootConfigDto(botId);
+    const secrets = runtimeStore.getDecryptedChatwootTokens(botId);
+
+    if (!config || !secrets) {
+      throw new Error('Este bot no tiene configuración de Chatwoot guardada.');
+    }
+
+    const labelToken = secrets.userApiAccessToken || secrets.apiAccessToken;
+    if (!labelToken) {
+      throw new Error('No hay token de acceso configurado para consultar Chatwoot.');
+    }
+
+    return fetchChatwootAccountLabelsApi({
+      config,
+      apiAccessToken: labelToken
+    });
   }
 
   public static async processWebhookEvent(

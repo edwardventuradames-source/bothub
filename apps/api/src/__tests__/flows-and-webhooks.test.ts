@@ -10,7 +10,11 @@ import {
 import { provisionAdminAccountFromServer } from '../modules/auth/auth.service.js';
 import { runtimeStore } from '../lib/runtime-store.js';
 import { ChatwootService } from '../modules/chatwoot/chatwoot.service.js';
-import { sendMessageToChatwootApi } from '../modules/chatwoot/chatwoot.client.js';
+import {
+  applyChatwootConversationLabelsApi,
+  fetchChatwootAccountLabelsApi,
+  sendMessageToChatwootApi
+} from '../modules/chatwoot/chatwoot.client.js';
 
 function signMetaPayload(payload: unknown, appSecret: string): string {
   const raw = JSON.stringify(payload);
@@ -798,6 +802,91 @@ describe('Server-Side Admin Provisioning, Flow Engine & Webhooks', () => {
       expect(sentBodies).toHaveLength(2);
       expect(sentBodies[0].content_type).toBe('input_select');
       expect(sentBodies[1].content_type).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('fetches Chatwoot account labels and merges assigned flow tags onto Chatwoot conversation', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string; body?: string; token?: string }> = [];
+
+    try {
+      globalThis.fetch = (async (url, init) => {
+        const urlStr = String(url);
+        const method = String(init?.method ?? 'GET');
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        const bodyStr = init?.body ? String(init.body) : undefined;
+        calls.push({
+          url: urlStr,
+          method,
+          body: bodyStr,
+          token: headers.api_access_token
+        });
+
+        if (urlStr.endsWith('/labels') && !urlStr.includes('/conversations/')) {
+          return new Response(
+            JSON.stringify({
+              payload: [
+                { id: 1, title: 'lead-vip', description: 'Cliente VIP', color: '#2152FF' },
+                { id: 2, title: 'soporte', description: null, color: '#10b981' }
+              ]
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        if (urlStr.includes('/conversations/77/labels') && method === 'GET') {
+          return new Response(
+            JSON.stringify({ payload: ['existente'] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        if (urlStr.includes('/conversations/77/labels') && method === 'POST') {
+          return new Response(
+            JSON.stringify({ payload: ['existente', 'lead-vip'] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        return new Response('{}', { status: 404 });
+      }) as typeof fetch;
+
+      const cwConfig = {
+        baseUrl: 'https://chat.bytemv.com',
+        accountId: 1,
+        inboxId: 1,
+        hasApiAccessToken: true,
+        maskedApiAccessToken: 'cw_•••',
+        webhookTokenPreview: 'wh_•••',
+        webhookEndpointPath: '/api/webhooks/chatwoot/bot-1',
+        handoffReturnCommand: '#bot',
+        isActive: true,
+        lastSyncedAt: null
+      };
+
+      const labels = await fetchChatwootAccountLabelsApi({
+        config: cwConfig,
+        apiAccessToken: 'user_token_123'
+      });
+      expect(labels).toHaveLength(2);
+      expect(labels[0].title).toBe('lead-vip');
+
+      const applied = await applyChatwootConversationLabelsApi({
+        config: cwConfig,
+        apiAccessToken: 'user_token_123',
+        conversationId: 77,
+        labels: ['lead-vip', 'existente']
+      });
+      expect(applied.applied).toBe(true);
+      expect(applied.labels).toEqual(['existente', 'lead-vip']);
+
+      const postCall = calls.find(
+        (c) => c.url.includes('/conversations/77/labels') && c.method === 'POST'
+      );
+      expect(postCall).toBeDefined();
+      expect(JSON.parse(postCall!.body!)).toEqual({ labels: ['existente', 'lead-vip'] });
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -5,6 +5,7 @@ import {
   BotLogDto,
   ChatwootConfigDto,
   ChatwootConfigInput,
+  ChatwootLabelDto,
   CloudApiConfigInput,
   ContactDto,
   ConversationDto,
@@ -205,6 +206,8 @@ export const botsApi = {
     }>(`/bots/${id}/chatwoot/test`, {
       method: 'POST'
     }),
+  listChatwootLabels: (id: string) =>
+    performRequest<{ labels: ChatwootLabelDto[] }>(`/bots/${id}/chatwoot/labels`),
   saveCloudApi: (id: string, input: CloudApiConfigInput) =>
     performRequest<{ bot: BotDto }>(`/bots/${id}/cloud-api`, {
       method: 'PUT',

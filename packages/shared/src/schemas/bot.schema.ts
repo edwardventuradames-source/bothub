@@ -133,23 +133,33 @@ export const ChatwootConfigInputSchema = z.object({
   accountId: z.number().int().positive(),
   inboxId: z.number().int().positive(),
   apiAccessToken: z.string().trim().optional().default(''),
+  userApiAccessToken: z.string().trim().optional().default(''),
   webhookToken: z.string().trim().optional().default(''),
   handoffReturnCommand: z.string().min(2).max(40).default('#bot'),
   isActive: z.boolean().optional().default(true)
 });
-export type ChatwootConfigInput = z.infer<typeof ChatwootConfigInputSchema>;
+export type ChatwootConfigInput = z.input<typeof ChatwootConfigInputSchema>;
 
 export interface ChatwootConfigDto {
   baseUrl: string;
   accountId: number;
   inboxId: number;
   hasApiAccessToken: boolean;
+  hasUserApiAccessToken?: boolean;
   maskedApiAccessToken: string;
+  maskedUserApiAccessToken?: string;
   webhookTokenPreview: string;
   webhookEndpointPath: string;
   handoffReturnCommand: string;
   isActive: boolean;
   lastSyncedAt: string | null;
+}
+
+export interface ChatwootLabelDto {
+  id: number;
+  title: string;
+  description: string | null;
+  color: string;
 }
 
 export interface BotDto {

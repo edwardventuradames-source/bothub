@@ -109,6 +109,7 @@ export interface FlowSimulationResponse {
   awaitingQuestionNodeId: string | null;
   variables: Record<string, string>;
   tags: string[];
+  assignedTags?: string[];
   handoffRequested: boolean;
   handoffSummary: string | null;
   completed: boolean;

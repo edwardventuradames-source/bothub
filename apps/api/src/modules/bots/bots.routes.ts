@@ -560,6 +560,42 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  app.get<{ Params: { id: string } }>(
+    '/:id/chatwoot/labels',
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        tags: ['Chatwoot'],
+        summary: 'Listar etiquetas reales configuradas en Chatwoot'
+      }
+    },
+    async (request, reply) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const bot = runtimeStore.bots.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
+      if (!bot) {
+        return reply.status(404).send({
+          error: 'BOT_NOT_FOUND',
+          message: 'Bot no encontrado.'
+        });
+      }
+
+      try {
+        const labels = await ChatwootService.listLabels(bot.id);
+        return { labels };
+      } catch (err) {
+        return reply.status(400).send({
+          error: 'CHATWOOT_LABELS_FAILED',
+          message:
+            err instanceof Error
+              ? err.message
+              : 'No se pudieron obtener las etiquetas desde Chatwoot.'
+        });
+      }
+    }
+  );
+
   app.put<{ Params: { id: string } }>(
     '/:id/cloud-api',
     {

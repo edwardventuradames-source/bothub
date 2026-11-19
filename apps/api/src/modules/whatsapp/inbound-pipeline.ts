@@ -24,6 +24,7 @@ import {
   sendMessageToChatwootApi,
   toggleChatwootConversationStatusApi
 } from '../chatwoot/chatwoot.client.js';
+import { syncAssignedFlowLabelsToChatwoot } from '../chatwoot/chatwoot-labels.js';
 
 export interface InboundWhatsAppMessageParams {
   botId: string;
@@ -430,6 +431,20 @@ export async function processInboundWhatsAppMessage(
   conversation.collectedVariables = { ...simulation.variables };
   conversation.tags = [...simulation.tags];
   conversation.executionTrace.push(...simulation.trace);
+
+  const cwConfig = runtimeStore.getChatwootConfigDto(bot.id);
+  const cwSecrets = runtimeStore.getDecryptedChatwootTokens(bot.id);
+  if (cwConfig && cwSecrets && cwConfig.isActive && conversation.chatwootConversationId) {
+    await syncAssignedFlowLabelsToChatwoot({
+      bot,
+      config: cwConfig,
+      apiAccessToken: cwSecrets.apiAccessToken,
+      userApiAccessToken: cwSecrets.userApiAccessToken,
+      chatwootConvId: conversation.chatwootConversationId,
+      assignedTags: simulation.assignedTags,
+      io: params.io
+    });
+  }
 
   for (const reply of simulation.replies) {
     await deliverWhatsAppReply(

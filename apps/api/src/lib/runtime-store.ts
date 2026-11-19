@@ -36,6 +36,7 @@ export interface StoredChatwootSecrets {
   accountId: number;
   inboxId: number;
   encryptedApiAccessToken: string;
+  encryptedUserApiAccessToken?: string;
   encryptedWebhookToken: string;
   handoffReturnCommand: string;
   isActive: boolean;
@@ -240,12 +241,18 @@ class RuntimeStore {
       accountId: number;
       inboxId: number;
       apiAccessToken: string;
+      userApiAccessToken?: string;
       webhookToken: string;
       handoffReturnCommand: string;
       isActive?: boolean;
     }
   ): void {
+    const existing = this.chatwootSecrets.get(botId);
     const encryptedApiAccessToken = encryptSecret(input.apiAccessToken);
+    const trimmedUserToken = input.userApiAccessToken?.trim();
+    const encryptedUserApiAccessToken = trimmedUserToken
+      ? encryptSecret(trimmedUserToken)
+      : existing?.encryptedUserApiAccessToken;
     const encryptedWebhookToken = encryptSecret(input.webhookToken);
 
     this.chatwootSecrets.set(botId, {
@@ -253,6 +260,7 @@ class RuntimeStore {
       accountId: input.accountId,
       inboxId: input.inboxId,
       encryptedApiAccessToken,
+      ...(encryptedUserApiAccessToken ? { encryptedUserApiAccessToken } : {}),
       encryptedWebhookToken,
       handoffReturnCommand: input.handoffReturnCommand || '#bot',
       isActive: input.isActive ?? true,
@@ -274,13 +282,18 @@ class RuntimeStore {
       return null;
     }
     const rawApiToken = decryptSecret(stored.encryptedApiAccessToken);
+    const rawUserToken = stored.encryptedUserApiAccessToken
+      ? decryptSecret(stored.encryptedUserApiAccessToken)
+      : '';
     const rawWebhookToken = decryptSecret(stored.encryptedWebhookToken);
     return {
       baseUrl: stored.baseUrl,
       accountId: stored.accountId,
       inboxId: stored.inboxId,
       hasApiAccessToken: rawApiToken.length > 0,
+      hasUserApiAccessToken: rawUserToken.length > 0,
       maskedApiAccessToken: maskSecretValue(rawApiToken),
+      maskedUserApiAccessToken: rawUserToken ? maskSecretValue(rawUserToken) : '',
       webhookTokenPreview: maskSecretValue(rawWebhookToken),
       webhookEndpointPath: `/api/webhooks/chatwoot/${botId}`,
       handoffReturnCommand: stored.handoffReturnCommand,
@@ -291,6 +304,7 @@ class RuntimeStore {
 
   public getDecryptedChatwootTokens(botId: string): {
     apiAccessToken: string;
+    userApiAccessToken: string | null;
     webhookToken: string;
     handoffReturnCommand: string;
   } | null {
@@ -298,8 +312,13 @@ class RuntimeStore {
     if (!stored) {
       return null;
     }
+    const userApiAccessToken = stored.encryptedUserApiAccessToken
+      ? decryptSecret(stored.encryptedUserApiAccessToken)
+      : null;
     return {
       apiAccessToken: decryptSecret(stored.encryptedApiAccessToken),
+      userApiAccessToken:
+        userApiAccessToken && userApiAccessToken.length > 0 ? userApiAccessToken : null,
       webhookToken: decryptSecret(stored.encryptedWebhookToken),
       handoffReturnCommand: stored.handoffReturnCommand
     };

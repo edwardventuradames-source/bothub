@@ -22,6 +22,7 @@ import {
   sendMessageToChatwootApi,
   toggleChatwootConversationStatusApi
 } from './chatwoot.client.js';
+import { syncAssignedFlowLabelsToChatwoot } from './chatwoot-labels.js';
 import type { ChatwootWebhookPayload } from './chatwoot.service.js';
 
 async function sendToChatwootWithLog(params: {
@@ -67,6 +68,7 @@ export async function processIncomingChatwootCustomerMessage(
   config: ChatwootConfigDto,
   secrets: {
     apiAccessToken: string;
+    userApiAccessToken?: string | null;
     webhookToken: string;
     handoffReturnCommand: string;
   },
@@ -388,6 +390,16 @@ export async function processIncomingChatwootCustomerMessage(
   conversation.collectedVariables = { ...simulation.variables };
   conversation.tags = [...simulation.tags];
   conversation.executionTrace.push(...simulation.trace);
+
+  await syncAssignedFlowLabelsToChatwoot({
+    bot,
+    config,
+    apiAccessToken: secrets.apiAccessToken,
+    userApiAccessToken: secrets.userApiAccessToken,
+    chatwootConvId,
+    assignedTags: simulation.assignedTags,
+    io
+  });
 
   for (const reply of simulation.replies) {
     const formattedText = formatBotReplyForChatwoot(reply);

@@ -280,6 +280,7 @@ export async function executeFlowSimulationStep(
     ultimo_mensaje: request.inputMessage.trim()
   };
   const tags = Array.from(new Set(request.tags));
+  const assignedTags: string[] = [];
   const replies: FlowSimulationBotReply[] = [];
   const trace: FlowExecutionStepLog[] = [];
   let handoffRequested = false;
@@ -699,9 +700,14 @@ export async function executeFlowSimulationStep(
         const nodeTags = Array.isArray(activeNode.data.tags)
           ? (activeNode.data.tags as string[])
           : [];
-        for (const tag of nodeTags) {
+        for (const rawTag of nodeTags) {
+          const tag = rawTag.trim();
+          if (!tag) continue;
           if (!tags.includes(tag)) {
             tags.push(tag);
+          }
+          if (!assignedTags.includes(tag)) {
+            assignedTags.push(tag);
           }
         }
         trace.push({
@@ -781,6 +787,7 @@ export async function executeFlowSimulationStep(
     awaitingQuestionNodeId,
     variables,
     tags,
+    assignedTags,
     handoffRequested,
     handoffSummary,
     completed,

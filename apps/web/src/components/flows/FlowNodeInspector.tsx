@@ -1,12 +1,21 @@
 import { Edge, Node } from '@xyflow/react';
-import { Sparkles, Trash2 } from 'lucide-react';
-import { FlowNodeType, QuestionValidationType } from '@bothub/shared';
+import { RefreshCw, Sparkles, Tag, Trash2 } from 'lucide-react';
+import {
+  ChatwootLabelDto,
+  FlowNodeType,
+  QuestionValidationType
+} from '@bothub/shared';
 import { InteractiveOptionsInspector } from './InteractiveOptionsInspector.js';
 
 interface FlowNodeInspectorProps {
   selectedNode: Node | null;
   allNodes: Node[];
   edges: Edge[];
+  chatwootLabels?: ChatwootLabelDto[];
+  isLoadingChatwootLabels?: boolean;
+  chatwootLabelsError?: string | null;
+  hasLinkedChatwootBot?: boolean;
+  onRefreshChatwootLabels?: () => void;
   onUpdateData: (key: string, value: unknown) => void;
   onSetBranchEdge: (
     sourceNodeId: string,
@@ -21,6 +30,11 @@ export function FlowNodeInspector({
   selectedNode,
   allNodes,
   edges,
+  chatwootLabels = [],
+  isLoadingChatwootLabels = false,
+  chatwootLabelsError = null,
+  hasLinkedChatwootBot = false,
+  onRefreshChatwootLabels,
   onUpdateData,
   onSetBranchEdge,
   onDeleteNode
@@ -422,32 +436,99 @@ export function FlowNodeInspector({
           ) : null}
 
           {selectedNodeType === 'ASSIGN_TAG' ? (
-            <div>
-              <label
-                htmlFor="assign-tags-input"
-                className="mb-1 block text-xs font-bold text-soft-ink"
-              >
-                Etiquetas (separadas por coma)
-              </label>
-              <input
-                id="assign-tags-input"
-                type="text"
-                value={
-                  Array.isArray(selectedNode.data.tags)
-                    ? (selectedNode.data.tags as string[]).join(', ')
-                    : ''
-                }
-                onChange={(e) =>
-                  onUpdateData(
-                    'tags',
-                    e.target.value
-                      .split(',')
-                      .map((t) => t.trim())
-                      .filter(Boolean)
-                  )
-                }
-                className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-              />
+            <div className="flex flex-col gap-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-soft-ink">
+                  <Tag className="h-3.5 w-3.5 text-soft-blue" />
+                  <span>Etiquetas de Chatwoot</span>
+                </span>
+                {hasLinkedChatwootBot && onRefreshChatwootLabels ? (
+                  <button
+                    type="button"
+                    disabled={isLoadingChatwootLabels}
+                    onClick={onRefreshChatwootLabels}
+                    className="inline-flex items-center gap-1 rounded-lg border border-soft-line bg-soft-bg px-2 py-1 text-[11px] font-bold text-soft-blue hover:border-soft-blue disabled:opacity-60"
+                  >
+                    <RefreshCw
+                      className={`h-3 w-3 ${isLoadingChatwootLabels ? 'animate-spin' : ''}`}
+                    />
+                    <span>Jalar de Chatwoot</span>
+                  </button>
+                ) : null}
+              </div>
+
+              {chatwootLabelsError ? (
+                <div className="rounded-xl border border-soft-warn/40 bg-soft-warn/10 p-2.5 text-[11px] font-semibold text-soft-ink">
+                  {chatwootLabelsError}
+                </div>
+              ) : null}
+
+              {chatwootLabels.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5 rounded-xl border border-soft-line bg-soft-bg p-2.5">
+                  {chatwootLabels.map((cwLabel) => {
+                    const currentTags = Array.isArray(selectedNode.data.tags)
+                      ? (selectedNode.data.tags as string[])
+                      : [];
+                    const isSelected = currentTags.includes(cwLabel.title);
+
+                    return (
+                      <button
+                        key={cwLabel.id}
+                        type="button"
+                        onClick={() => {
+                          const nextTags = isSelected
+                            ? currentTags.filter((t) => t !== cwLabel.title)
+                            : [...currentTags, cwLabel.title];
+                          onUpdateData('tags', nextTags);
+                        }}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold transition-all ${
+                          isSelected
+                            ? 'border-soft-blue bg-soft-blue text-white shadow-sm'
+                            : 'border-soft-line bg-soft-card text-soft-ink hover:border-soft-blue'
+                        }`}
+                      >
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: cwLabel.color || '#2152FF' }}
+                        />
+                        <span>{cwLabel.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : hasLinkedChatwootBot && !isLoadingChatwootLabels && !chatwootLabelsError ? (
+                <p className="text-[11px] text-soft-muted">
+                  No se encontraron etiquetas en la cuenta de Chatwoot o aún no se han creado allá.
+                </p>
+              ) : null}
+
+              <div>
+                <label
+                  htmlFor="assign-tags-input"
+                  className="mb-1 block text-xs font-bold text-soft-ink"
+                >
+                  Etiquetas seleccionadas (separadas por coma)
+                </label>
+                <input
+                  id="assign-tags-input"
+                  type="text"
+                  value={
+                    Array.isArray(selectedNode.data.tags)
+                      ? (selectedNode.data.tags as string[]).join(', ')
+                      : ''
+                  }
+                  onChange={(e) =>
+                    onUpdateData(
+                      'tags',
+                      e.target.value
+                        .split(',')
+                        .map((t) => t.trim())
+                        .filter(Boolean)
+                    )
+                  }
+                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+                />
+              </div>
             </div>
           ) : null}
 
