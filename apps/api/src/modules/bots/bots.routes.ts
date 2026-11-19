@@ -448,6 +448,13 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const chatwootConfig = ChatwootService.saveConfig(bot.id, parsed.data);
+      if (bot.driver === 'CHATWOOT') {
+        try {
+          await ChatwootService.testConnection(bot.id, app.io);
+        } catch {
+          void 0;
+        }
+      }
       return { chatwootConfig, bot };
     }
   );
@@ -474,14 +481,15 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
       }
 
       try {
-        return await ChatwootService.testConnection(bot.id);
+        return await ChatwootService.testConnection(bot.id, app.io);
       } catch (err) {
         return reply.status(400).send({
           error: 'CHATWOOT_TEST_FAILED',
           message:
             err instanceof Error
               ? err.message
-              : 'Error probando conexión con Chatwoot.'
+              : 'Error probando conexión con Chatwoot.',
+          bot
         });
       }
     }

@@ -9,6 +9,7 @@ import {
 } from '../modules/flows/flow.engine.js';
 import { provisionAdminAccountFromServer } from '../modules/auth/auth.service.js';
 import { runtimeStore } from '../lib/runtime-store.js';
+import { ChatwootService } from '../modules/chatwoot/chatwoot.service.js';
 
 function signMetaPayload(payload: unknown, appSecret: string): string {
   const raw = JSON.stringify(payload);
@@ -676,5 +677,75 @@ describe('Server-Side Admin Provisioning, Flow Engine & Webhooks', () => {
     expect(chatwootIncomingRes.json().action).toBe('bot_flow_replied');
 
     await app.close();
+  });
+
+  it('recognizes Chatwoot Agent Bot 401 endpoint restriction as valid connection and sets ERROR status on invalid token', async () => {
+    const botId = 'bot-cw-test-auth';
+    runtimeStore.bots.push({
+      id: botId,
+      organizationId: '00000000-0000-4000-8000-000000000100',
+      name: 'Marcos Agent Bot',
+      description: 'Chatwoot Agent Bot',
+      phoneNumber: 'Chatwoot Agent Bot',
+      driver: 'CHATWOOT',
+      status: 'DISCONNECTED',
+      isActive: true,
+      activeFlowId: null,
+      activeFlowName: null,
+      timezone: 'America/Santo_Domingo',
+      outOfHoursMessage: 'Fuera de horario',
+      inactivityTimeoutMinutes: 15,
+      inactivityCloseMessage: 'Cerrado',
+      typingDelayMs: 500,
+      rateLimitPerMinute: 30,
+      messagesToday: 0,
+      activeConversations: 0,
+      handoffRate: 0,
+      qrCodeData: null,
+      qrExpiresAt: null,
+      lastConnectedAt: null,
+      chatwootConfig: null,
+      cloudApiConfig: null,
+      businessHours: [],
+      quickReplies: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    ChatwootService.saveConfig(botId, {
+      baseUrl: 'https://chat.bytemv.com',
+      accountId: 1,
+      inboxId: 1,
+      apiAccessToken: 'valid_agent_bot_token_123',
+      webhookToken: 'wh_sec_marcos_2026',
+      handoffReturnCommand: '#bot',
+      isActive: true
+    });
+
+    const originalFetch = globalThis.fetch;
+
+    try {
+      globalThis.fetch = (async () =>
+        new Response(
+          JSON.stringify({ error: 'Access to this endpoint is not authorized for bots' }),
+          { status: 401, headers: { 'Content-Type': 'application/json' } }
+        )) as typeof fetch;
+
+      const okResult = await ChatwootService.testConnection(botId);
+      expect(okResult.connected).toBe(true);
+      expect(okResult.bot?.status).toBe('CONNECTED');
+
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ error: 'Invalid access token' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' }
+        })) as typeof fetch;
+
+      await expect(ChatwootService.testConnection(botId)).rejects.toThrow('401');
+      const updatedBot = runtimeStore.bots.find((b) => b.id === botId);
+      expect(updatedBot?.status).toBe('ERROR');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

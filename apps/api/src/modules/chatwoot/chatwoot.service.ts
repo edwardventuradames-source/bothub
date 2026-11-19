@@ -114,37 +114,95 @@ export class ChatwootService {
     return dto;
   }
 
-  public static async testConnection(botId: string): Promise<{
+  public static async testConnection(
+    botId: string,
+    io?: SocketIOServer
+  ): Promise<{
     connected: boolean;
     latencyMs: number;
     inboxName: string;
     message: string;
+    bot?: ReturnType<typeof runtimeStore.bots.find>;
   }> {
     const config = runtimeStore.getChatwootConfigDto(botId);
     const secrets = runtimeStore.getDecryptedChatwootTokens(botId);
+    const bot = runtimeStore.bots.find((item) => item.id === botId);
 
     if (!config || !secrets || !secrets.apiAccessToken) {
       throw new Error('El bot aún no tiene configuración de Chatwoot guardada.');
     }
 
-    const result = await verifyChatwootConnectionApi({
-      config,
-      apiAccessToken: secrets.apiAccessToken
-    });
+    try {
+      const result = await verifyChatwootConnectionApi({
+        config,
+        apiAccessToken: secrets.apiAccessToken
+      });
 
-    runtimeStore.appendLog({
-      botId,
-      level: 'INFO',
-      event: 'chatwoot.connection.verified',
-      message: result.message,
-      metadata: {
-        accountId: config.accountId,
-        inboxId: config.inboxId,
-        latencyMs: result.latencyMs
+      if (bot) {
+        bot.status = 'CONNECTED';
+        bot.isActive = true;
+        bot.lastConnectedAt = new Date().toISOString();
+        bot.updatedAt = new Date().toISOString();
+        runtimeStore.persistStateToDisk();
+        void syncBotRecordToDb(bot);
+        if (io) {
+          io.emit('whatsapp:status', {
+            botId: bot.id,
+            status: bot.status,
+            driver: bot.driver,
+            updatedAt: bot.updatedAt
+          });
+        }
       }
-    });
 
-    return result;
+      runtimeStore.appendLog({
+        botId,
+        level: 'INFO',
+        event: 'chatwoot.connection.verified',
+        message: result.message,
+        metadata: {
+          accountId: config.accountId,
+          inboxId: config.inboxId,
+          latencyMs: result.latencyMs
+        }
+      });
+
+      return { ...result, bot };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Error verificando conexión con Chatwoot.';
+
+      if (bot && bot.driver === 'CHATWOOT') {
+        bot.status = 'ERROR';
+        bot.updatedAt = new Date().toISOString();
+        runtimeStore.persistStateToDisk();
+        void syncBotRecordToDb(bot);
+        if (io) {
+          io.emit('whatsapp:status', {
+            botId: bot.id,
+            status: bot.status,
+            driver: bot.driver,
+            lastError: errorMessage,
+            updatedAt: bot.updatedAt
+          });
+        }
+      }
+
+      runtimeStore.appendLog({
+        botId,
+        level: 'ERROR',
+        event: 'chatwoot.connection.failed',
+        message: errorMessage,
+        metadata: {
+          accountId: config.accountId,
+          inboxId: config.inboxId
+        }
+      });
+
+      throw error;
+    }
   }
 
   public static async processWebhookEvent(

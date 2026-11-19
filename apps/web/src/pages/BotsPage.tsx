@@ -235,6 +235,7 @@ export function BotsPage() {
           const isSelected = selectedBot?.id === bot.id;
           const isOnline = bot.status === 'CONNECTED';
           const isWaitingQr = bot.status === 'WAITING_QR';
+          const isError = bot.status === 'ERROR';
 
           return (
             <motion.article
@@ -266,7 +267,9 @@ export function BotsPage() {
                       ? 'bg-[#82d616]/15 text-[#4b830d] dark:text-[#82d616]'
                       : isWaitingQr
                         ? 'bg-soft-warn/15 text-soft-warn'
-                        : 'bg-soft-line text-soft-muted'
+                        : isError
+                          ? 'bg-soft-danger/15 text-soft-danger'
+                          : 'bg-soft-line text-soft-muted'
                   }`}
                 >
                   <span
@@ -275,7 +278,9 @@ export function BotsPage() {
                         ? 'dot-online bg-[#82d616]'
                         : isWaitingQr
                           ? 'bg-soft-warn'
-                          : 'bg-soft-muted'
+                          : isError
+                            ? 'bg-soft-danger'
+                            : 'bg-soft-muted'
                     }`}
                   />
                   {bot.status}

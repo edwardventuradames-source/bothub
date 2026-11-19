@@ -82,8 +82,17 @@ export function BotChatwootTab({
   async function handleTestChatwoot(): Promise<void> {
     try {
       const res = await botsApi.testChatwoot(selectedBot.id);
+      if (res.bot) {
+        onBotUpdated(res.bot);
+      }
       onFeedback('ok', `${res.message} · Latencia: ${res.latencyMs}ms`);
     } catch (err) {
+      try {
+        const { bot } = await botsApi.getById(selectedBot.id);
+        onBotUpdated(bot);
+      } catch {
+        void 0;
+      }
       onFeedback(
         'err',
         err instanceof Error

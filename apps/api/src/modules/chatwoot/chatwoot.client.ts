@@ -66,6 +66,17 @@ export async function verifyChatwootConnectionApi(params: {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => '');
+      if (
+        response.status === 401 &&
+        errorText.toLowerCase().includes('not authorized for bots')
+      ) {
+        return {
+          connected: true,
+          latencyMs,
+          inboxName: `Agent Bot · Inbox #${params.config.inboxId}`,
+          message: `Conexión verificada con ${params.config.baseUrl} en ${latencyMs}ms (Token de Agent Bot autorizado para mensajes y handoff).`
+        };
+      }
       throw new Error(
         `Chatwoot respondió HTTP ${response.status}: ${errorText.slice(0, 180)}`
       );

@@ -214,6 +214,7 @@ export const botsApi = {
       latencyMs: number;
       inboxName: string;
       message: string;
+      bot?: BotDto;
     }>(`/bots/${id}/chatwoot/test`, {
       method: 'POST'
     }),
