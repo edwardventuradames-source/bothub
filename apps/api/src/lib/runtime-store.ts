@@ -54,6 +54,7 @@ export interface StoredUserRecord extends OrganizationUserDto {
   organizationId: string;
   organizationName: string;
   passwordHash: string;
+  tokenVersion?: number;
 }
 
 export interface StoredApiKeyRecord extends ApiKeyDto {

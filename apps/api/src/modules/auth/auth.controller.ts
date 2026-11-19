@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import {
   ForgotPasswordInputSchema,
@@ -13,10 +14,25 @@ import {
   createPasswordResetRequest,
   getUserProfileById,
   registerUserAccount,
+  revokeAccessTokenJti,
   revokeRefreshToken,
   rotateRefreshToken
 } from './auth.service.js';
 import { env } from '../../config/env.js';
+
+async function signSessionAccessToken(
+  reply: FastifyReply,
+  session: { user: { id: string; email: string; role: 'ADMIN' | 'OPERATOR' | 'VIEWER'; organizationId: string }; tokenVersion: number }
+): Promise<string> {
+  return reply.jwtSign({
+    sub: session.user.id,
+    email: session.user.email,
+    role: session.user.role,
+    organizationId: session.user.organizationId,
+    jti: crypto.randomUUID(),
+    tokenVersion: session.tokenVersion
+  });
+}
 
 export async function registerHandler(
   request: FastifyRequest,
@@ -38,12 +54,7 @@ export async function registerHandler(
       ipAddress: request.ip
     });
 
-    const accessToken = await reply.jwtSign({
-      sub: session.user.id,
-      email: session.user.email,
-      role: session.user.role,
-      organizationId: session.user.organizationId
-    });
+    const accessToken = await signSessionAccessToken(reply, session);
 
     reply.status(201).send({
       accessToken,
@@ -82,12 +93,7 @@ export async function loginHandler(
       ipAddress: request.ip
     });
 
-    const accessToken = await reply.jwtSign({
-      sub: session.user.id,
-      email: session.user.email,
-      role: session.user.role,
-      organizationId: session.user.organizationId
-    });
+    const accessToken = await signSessionAccessToken(reply, session);
 
     reply.status(200).send({
       accessToken,
@@ -125,12 +131,7 @@ export async function refreshHandler(
       ipAddress: request.ip
     });
 
-    const accessToken = await reply.jwtSign({
-      sub: session.user.id,
-      email: session.user.email,
-      role: session.user.role,
-      organizationId: session.user.organizationId
-    });
+    const accessToken = await signSessionAccessToken(reply, session);
 
     reply.status(200).send({
       accessToken,
@@ -156,6 +157,13 @@ export async function logoutHandler(
   const parsed = RefreshTokenInputSchema.safeParse(request.body);
   if (parsed.success) {
     await revokeRefreshToken(parsed.data.refreshToken);
+  }
+  try {
+    await request.jwtVerify();
+    const payload = request.user as { jti?: string; exp?: number } | undefined;
+    revokeAccessTokenJti(payload?.jti, payload?.exp);
+  } catch {
+    void 0;
   }
   reply.status(200).send({ success: true });
 }

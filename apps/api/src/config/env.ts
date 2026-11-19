@@ -69,7 +69,7 @@ function loadOrCreatePersistedSecrets(): PersistedServerSecrets {
       fs.writeFileSync(
         SERVER_SECRETS_FILE,
         JSON.stringify(generated, null, 2),
-        'utf8'
+        { encoding: 'utf8', mode: 0o600 }
       );
     } catch {
       void 0;
@@ -95,8 +95,8 @@ const EnvSchema = z.object({
     .string()
     .min(32)
     .default(persistedSecrets.jwtRefreshSecret),
-  JWT_ACCESS_EXPIRES_IN: z.string().default('24h'),
-  JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
+  JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
+  JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
   ENCRYPTION_KEY_HEX: z
     .string()
     .length(64)

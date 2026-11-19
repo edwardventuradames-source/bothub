@@ -5,6 +5,7 @@ import {
   FlowSimulationBotReply
 } from '@bothub/shared';
 import { verifySecretConstantTime } from '../../lib/crypto.js';
+import { env } from '../../config/env.js';
 import { runtimeStore } from '../../lib/runtime-store.js';
 import { syncBotRecordToDb } from '../../lib/persistence.js';
 import { formatBotReplyForChatwoot } from '../chatwoot/chatwoot.client.js';
@@ -182,6 +183,10 @@ export class CloudApiDriver implements WhatsAppProviderDriver {
         return { valid: false, reason: 'invalid_signature' };
       }
       return { valid: true };
+    }
+
+    if (env.NODE_ENV === 'production') {
+      return { valid: false, reason: 'app_secret_required_in_production' };
     }
 
     if (signatureHeader) {

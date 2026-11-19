@@ -13,6 +13,12 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/register',
     {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '15 minutes'
+        }
+      },
       schema: {
         tags: ['Auth'],
         summary: 'Crear cuenta de administrador y organización desde cero'
@@ -24,6 +30,12 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/login',
     {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute'
+        }
+      },
       schema: {
         tags: ['Auth'],
         summary: 'Autenticar usuario con correo y contraseña'
@@ -35,6 +47,12 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/refresh',
     {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: '1 minute'
+        }
+      },
       schema: {
         tags: ['Auth'],
         summary: 'Rotar refresh token y obtener nuevo access token'
@@ -69,6 +87,12 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/forgot-password',
     {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: '15 minutes'
+        }
+      },
       schema: {
         tags: ['Auth'],
         summary: 'Solicitar token de recuperación de contraseña'
@@ -80,6 +104,12 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/reset-password',
     {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '15 minutes'
+        }
+      },
       schema: {
         tags: ['Auth'],
         summary: 'Restablecer contraseña con token de recuperación'

@@ -13,8 +13,13 @@ import {
   DEFAULT_ORG_ID,
   runtimeStore
 } from '../../lib/runtime-store.js';
-import { syncConversationStateToDb } from '../../lib/persistence.js';
+import {
+  isDatabaseConfigured,
+  syncConversationStateToDb
+} from '../../lib/persistence.js';
+import { prisma } from '../../lib/prisma.js';
 import { assertSafeExternalUrl } from '../../lib/ssrf-guard.js';
+import { bumpUserTokenVersion } from '../auth/auth.service.js';
 import { toggleChatwootConversationStatusApi } from '../chatwoot/chatwoot.client.js';
 import { ChatwootService, ChatwootWebhookPayload } from '../chatwoot/chatwoot.service.js';
 import { BotNotFoundError } from '../whatsapp/inbound-pipeline.js';
@@ -316,23 +321,49 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         });
       }
 
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const creatorRecord = runtimeStore.users.find((u) => u.organizationId === orgId);
+      const organizationName = creatorRecord?.organizationName ?? 'Mi Organización';
       const nowIso = new Date().toISOString();
+      const passwordHash = await bcrypt.hash(parsed.data.password, 12);
+      let userId: string = crypto.randomUUID();
+
+      if (isDatabaseConfigured()) {
+        try {
+          const dbUser = await prisma.user.create({
+            data: {
+              id: userId,
+              organizationId: orgId,
+              email: parsed.data.email.toLowerCase(),
+              passwordHash,
+              name: parsed.data.name,
+              role: parsed.data.role,
+              isActive: true
+            }
+          });
+          userId = dbUser.id;
+        } catch {
+          void 0;
+        }
+      }
+
       const newUser = {
-        id: crypto.randomUUID(),
-        organizationId: request.user?.organizationId ?? DEFAULT_ORG_ID,
-        organizationName: 'BotHub Enterprise',
+        id: userId,
+        organizationId: orgId,
+        organizationName,
         name: parsed.data.name,
-        email: parsed.data.email,
+        email: parsed.data.email.toLowerCase(),
         role: parsed.data.role,
         isActive: true,
         lastLoginAt: null,
         createdAt: nowIso,
-        passwordHash: await bcrypt.hash(parsed.data.password, 10)
+        passwordHash,
+        tokenVersion: 1
       };
 
       runtimeStore.users.push(newUser);
       runtimeStore.persistUsersToDisk();
-      const { passwordHash: _ignored, ...publicUser } = newUser;
+      const { passwordHash: _ignored, tokenVersion: _tv, ...publicUser } = newUser;
       return reply.status(201).send({ user: publicUser });
     }
   );
@@ -366,12 +397,58 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         });
       }
 
+      const activeAdminsInOrg = runtimeStore.users.filter(
+        (u) => u.organizationId === orgId && u.role === 'ADMIN' && u.isActive
+      );
+      const isLastActiveAdmin =
+        user.role === 'ADMIN' && user.isActive && activeAdminsInOrg.length <= 1;
+      if (
+        isLastActiveAdmin &&
+        (parsed.data.isActive === false ||
+          (parsed.data.role !== undefined && parsed.data.role !== 'ADMIN'))
+      ) {
+        return reply.status(409).send({
+          error: 'LAST_ADMIN_PROTECTED',
+          message: 'No puedes suspender ni degradar al último administrador activo de la organización.'
+        });
+      }
+
+      const shouldRevokeSessions =
+        (parsed.data.isActive !== undefined && parsed.data.isActive !== user.isActive) ||
+        (parsed.data.role !== undefined && parsed.data.role !== user.role);
+
       if (parsed.data.name !== undefined) user.name = parsed.data.name;
       if (parsed.data.role !== undefined) user.role = parsed.data.role;
       if (parsed.data.isActive !== undefined) user.isActive = parsed.data.isActive;
-      runtimeStore.persistUsersToDisk();
 
-      const { passwordHash: _ignored, ...publicUser } = user;
+      if (isDatabaseConfigured()) {
+        try {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              name: user.name,
+              role: user.role,
+              isActive: user.isActive
+            }
+          });
+          if (shouldRevokeSessions) {
+            await prisma.refreshToken.updateMany({
+              where: { userId: user.id, revokedAt: null },
+              data: { revokedAt: new Date() }
+            });
+          }
+        } catch {
+          void 0;
+        }
+      }
+
+      if (shouldRevokeSessions) {
+        bumpUserTokenVersion(user.id);
+      } else {
+        runtimeStore.persistUsersToDisk();
+      }
+
+      const { passwordHash: _ignored, tokenVersion: _tv, ...publicUser } = user;
       return { user: publicUser };
     }
   );

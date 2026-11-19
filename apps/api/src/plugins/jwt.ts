@@ -2,12 +2,15 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fastifyJwt from '@fastify/jwt';
 import { UserRole } from '@bothub/shared';
 import { env } from '../config/env.js';
+import { isAccessTokenValidForUser } from '../modules/auth/auth.service.js';
 
 export interface JwtUserPayload {
   sub: string;
   email: string;
   role: UserRole;
   organizationId: string;
+  jti?: string;
+  tokenVersion?: number;
 }
 
 declare module '@fastify/jwt' {
@@ -30,7 +33,11 @@ export async function registerJwtPlugin(app: FastifyInstance): Promise<void> {
   await app.register(fastifyJwt, {
     secret: env.JWT_ACCESS_SECRET,
     sign: {
+      algorithm: 'HS256',
       expiresIn: env.JWT_ACCESS_EXPIRES_IN
+    },
+    verify: {
+      algorithms: ['HS256']
     }
   });
 
@@ -39,6 +46,13 @@ export async function registerJwtPlugin(app: FastifyInstance): Promise<void> {
     async function authenticateHandler(request: FastifyRequest, reply: FastifyReply): Promise<void> {
       try {
         await request.jwtVerify();
+        const isStillValid = await isAccessTokenValidForUser(request.user);
+        if (!isStillValid) {
+          reply.status(401).send({
+            error: 'UNAUTHORIZED',
+            message: 'Sesión revocada o usuario inactivo. Inicia sesión nuevamente.'
+          });
+        }
       } catch {
         reply.status(401).send({
           error: 'UNAUTHORIZED',

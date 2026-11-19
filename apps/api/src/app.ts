@@ -1,6 +1,9 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import fastifyCors from '@fastify/cors';
+import fastifyHelmet from '@fastify/helmet';
+import fastifyRateLimit from '@fastify/rate-limit';
 import { env } from './config/env.js';
+import { logger } from './lib/logger.js';
 import { registerJwtPlugin } from './plugins/jwt.js';
 import { registerSwaggerPlugin } from './plugins/swagger.js';
 import { registerAuthRoutes } from './modules/auth/auth.routes.js';
@@ -16,7 +19,8 @@ declare module 'fastify' {
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: false
+    logger: false,
+    bodyLimit: 1048576
   });
 
   app.addContentTypeParser(
@@ -37,12 +41,75 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   );
 
-  const corsOrigins = env.CORS_ORIGIN.split(',').map((item) => item.trim());
+  const corsOrigins = env.CORS_ORIGIN.split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
   const allowAnyOrigin = corsOrigins.includes('*');
 
   await app.register(fastifyCors, {
-    origin: allowAnyOrigin ? true : corsOrigins,
-    credentials: true
+    origin: allowAnyOrigin ? '*' : corsOrigins,
+    credentials: !allowAnyOrigin
+  });
+
+  await app.register(fastifyHelmet, {
+    frameguard: { action: 'deny' },
+    hsts:
+      env.NODE_ENV === 'production'
+        ? { maxAge: 31536000, includeSubDomains: true }
+        : false,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'", 'ws:', 'wss:', 'http:', 'https:'],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"]
+      }
+    }
+  });
+
+  await app.register(fastifyRateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: '1 minute',
+    errorResponseBuilder: (_request, context) => ({
+      error: 'RATE_LIMIT_EXCEEDED',
+      message: `Demasiadas solicitudes. Intenta nuevamente en ${Math.ceil(context.ttl / 1000)} segundos.`
+    })
+  });
+
+  app.setErrorHandler((error, request, reply) => {
+    const errObj = error as { statusCode?: unknown; code?: unknown; message?: unknown };
+    const statusCode =
+      typeof errObj.statusCode === 'number' ? errObj.statusCode : 500;
+    const message =
+      typeof errObj.message === 'string' ? errObj.message : 'Solicitud inválida.';
+    const code = typeof errObj.code === 'string' ? errObj.code : 'BAD_REQUEST';
+    if (statusCode === 429) {
+      reply.status(429).send({
+        error: 'RATE_LIMIT_EXCEEDED',
+        message
+      });
+      return;
+    }
+    if (statusCode >= 400 && statusCode < 500) {
+      reply.status(statusCode).send({
+        error: code,
+        message
+      });
+      return;
+    }
+    logger.error(
+      { path: request.url, method: request.method, err: message },
+      'Unhandled API server error'
+    );
+    reply.status(500).send({
+      error: 'INTERNAL_SERVER_ERROR',
+      message: 'Error interno del servidor.'
+    });
   });
 
   await registerSwaggerPlugin(app);

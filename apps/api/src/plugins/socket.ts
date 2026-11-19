@@ -3,6 +3,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 import { runtimeStore } from '../lib/runtime-store.js';
+import { isAccessTokenValidForUser } from '../modules/auth/auth.service.js';
 import { JwtUserPayload } from './jwt.js';
 
 declare module 'fastify' {
@@ -44,8 +45,8 @@ export function attachSocketServer(app: FastifyInstance): SocketIOServer {
         return next(new Error('UNAUTHORIZED'));
       }
 
-      const activeUser = runtimeStore.users.find((u) => u.id === payload.sub);
-      if (activeUser && !activeUser.isActive) {
+      const validUser = await isAccessTokenValidForUser(payload);
+      if (!validUser) {
         return next(new Error('UNAUTHORIZED'));
       }
 
