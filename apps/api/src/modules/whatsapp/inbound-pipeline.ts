@@ -186,7 +186,7 @@ export async function processInboundWhatsAppMessage(
     runtimeStore.persistStateToDisk();
     void syncConversationStateToDb(contact, conversation);
     if (params.io) {
-      params.io.emit('conversation:updated', conversation);
+      params.io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
     }
     return {
       accepted: true,
@@ -231,8 +231,8 @@ export async function processInboundWhatsAppMessage(
     void syncConversationStateToDb(contact, conversation);
 
     if (params.io) {
-      params.io.emit('log:new', logEntry);
-      params.io.emit('conversation:updated', conversation);
+      params.io.to(`org:${bot.organizationId}`).emit('log:new', logEntry);
+      params.io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
     }
 
     return {
@@ -375,8 +375,8 @@ export async function processInboundWhatsAppMessage(
   void syncConversationStateToDb(contact, conversation);
 
   if (params.io) {
-    params.io.emit('log:new', logEntry);
-    params.io.emit('conversation:updated', conversation);
+    params.io.to(`org:${bot.organizationId}`).emit('log:new', logEntry);
+    params.io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
   }
 
   return {

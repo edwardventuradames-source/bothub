@@ -75,8 +75,6 @@ export class CloudApiDriver implements WhatsAppProviderDriver {
     if (!this.io) {
       return;
     }
-    this.io.emit('whatsapp:status', state);
-    this.io.to(`bot:${state.botId}`).emit('whatsapp:status', state);
     this.io.to(`org:${state.organizationId}`).emit('whatsapp:status', state);
   }
 

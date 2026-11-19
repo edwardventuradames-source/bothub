@@ -111,8 +111,6 @@ export class BaileysDriver implements WhatsAppProviderDriver {
       updatedAt: session.state.updatedAt
     };
 
-    this.io.emit('whatsapp:status', statusEvent);
-    this.io.to(`bot:${session.state.botId}`).emit('whatsapp:status', statusEvent);
     this.io.to(`org:${session.state.organizationId}`).emit('whatsapp:status', statusEvent);
 
     if (session.state.qrDataUrl && session.state.rawQr) {
@@ -124,8 +122,6 @@ export class BaileysDriver implements WhatsAppProviderDriver {
         generatedAt: session.state.qrGeneratedAt ?? new Date().toISOString(),
         expiresInSeconds: QR_EXPIRATION_SECONDS
       };
-      this.io.emit('whatsapp:qr', qrEvent);
-      this.io.to(`bot:${session.state.botId}`).emit('whatsapp:qr', qrEvent);
       this.io.to(`org:${session.state.organizationId}`).emit('whatsapp:qr', qrEvent);
     }
   }
@@ -173,8 +169,8 @@ export class BaileysDriver implements WhatsAppProviderDriver {
         event: logEvent.event,
         message: logEvent.message
       });
-      if (this.io) {
-        this.io.emit('log:new', logEntry);
+      if (this.io && bot) {
+        this.io.to(`org:${bot.organizationId}`).emit('log:new', logEntry);
       }
     }
   }

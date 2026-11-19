@@ -325,7 +325,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     if (app.io) {
-      app.io.emit('whatsapp:status', {
+      app.io.to(`org:${bot.organizationId}`).emit('whatsapp:status', {
         botId: bot.id,
         status: bot.status,
         phoneNumber: bot.phoneNumber,

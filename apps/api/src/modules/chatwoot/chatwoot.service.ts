@@ -164,7 +164,7 @@ export class ChatwootService {
         runtimeStore.persistStateToDisk();
         void syncBotRecordToDb(bot);
         if (io) {
-          io.emit('whatsapp:status', {
+          io.to(`org:${bot.organizationId}`).emit('whatsapp:status', {
             botId: bot.id,
             status: bot.status,
             driver: bot.driver,
@@ -198,7 +198,7 @@ export class ChatwootService {
         runtimeStore.persistStateToDisk();
         void syncBotRecordToDb(bot);
         if (io) {
-          io.emit('whatsapp:status', {
+          io.to(`org:${bot.organizationId}`).emit('whatsapp:status', {
             botId: bot.id,
             status: bot.status,
             driver: bot.driver,
@@ -341,7 +341,7 @@ export class ChatwootService {
       }
 
       if (io) {
-        io.emit('conversation:updated', conversation);
+        io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
       }
 
       return {
@@ -390,7 +390,7 @@ export class ChatwootService {
     }
 
     if (io) {
-      io.emit('conversation:updated', conversation);
+      io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
     }
 
     return {
@@ -518,7 +518,7 @@ export class ChatwootService {
       runtimeStore.persistStateToDisk();
       void syncConversationStateToDb(contact, conversation);
       if (io) {
-        io.emit('conversation:updated', conversation);
+        io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
       }
       return {
         accepted: true,
@@ -568,8 +568,8 @@ export class ChatwootService {
       void syncConversationStateToDb(contact, conversation);
 
       if (io) {
-        io.emit('log:new', logEntry);
-        io.emit('conversation:updated', conversation);
+        io.to(`org:${bot.organizationId}`).emit('log:new', logEntry);
+        io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
       }
 
       return {
@@ -676,7 +676,7 @@ export class ChatwootService {
           }
         });
         if (io) {
-          io.emit('log:new', errLog);
+          io.to(`org:${bot.organizationId}`).emit('log:new', errLog);
         }
       }
     }
@@ -722,8 +722,8 @@ export class ChatwootService {
     });
 
     if (io) {
-      io.emit('log:new', logEntry);
-      io.emit('conversation:updated', conversation);
+      io.to(`org:${bot.organizationId}`).emit('log:new', logEntry);
+      io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
     }
 
     return {

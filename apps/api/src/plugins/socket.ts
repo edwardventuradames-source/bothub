@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify';
 import { Server as SocketIOServer } from 'socket.io';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
+import { runtimeStore } from '../lib/runtime-store.js';
+import { JwtUserPayload } from './jwt.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -10,24 +12,67 @@ declare module 'fastify' {
 }
 
 export function attachSocketServer(app: FastifyInstance): SocketIOServer {
-  const corsOrigins = env.CORS_ORIGIN.split(',').map((item) => item.trim());
+  const corsOrigins = env.CORS_ORIGIN.split(',').map((item) => item.trim()).filter(Boolean);
   const allowAnyOrigin = corsOrigins.includes('*');
 
   const io = new SocketIOServer(app.server, {
     cors: {
-      origin: allowAnyOrigin ? true : corsOrigins,
-      credentials: true
+      origin: allowAnyOrigin ? '*' : corsOrigins,
+      credentials: !allowAnyOrigin
+    }
+  });
+
+  io.use(async (socket, next) => {
+    try {
+      const authToken =
+        typeof socket.handshake.auth?.token === 'string'
+          ? socket.handshake.auth.token
+          : undefined;
+      const headerAuth = socket.handshake.headers.authorization;
+      const bearerToken =
+        typeof headerAuth === 'string' && headerAuth.startsWith('Bearer ')
+          ? headerAuth.slice(7).trim()
+          : undefined;
+      const rawToken = authToken || bearerToken;
+
+      if (!rawToken) {
+        return next(new Error('UNAUTHORIZED'));
+      }
+
+      const payload = await app.jwt.verify<JwtUserPayload>(rawToken);
+      if (!payload?.sub || !payload?.organizationId) {
+        return next(new Error('UNAUTHORIZED'));
+      }
+
+      const activeUser = runtimeStore.users.find((u) => u.id === payload.sub);
+      if (activeUser && !activeUser.isActive) {
+        return next(new Error('UNAUTHORIZED'));
+      }
+
+      socket.data.user = payload;
+      return next();
+    } catch {
+      return next(new Error('UNAUTHORIZED'));
     }
   });
 
   io.on('connection', (socket) => {
-    const organizationId = socket.handshake.auth?.organizationId;
-    if (typeof organizationId === 'string' && organizationId.length > 0) {
-      socket.join(`org:${organizationId}`);
+    const user = socket.data.user as JwtUserPayload | undefined;
+    if (!user?.organizationId) {
+      socket.disconnect(true);
+      return;
     }
 
+    socket.join(`org:${user.organizationId}`);
+
     socket.on('bot:subscribe', (botId: string) => {
-      if (typeof botId === 'string' && botId.length > 0) {
+      if (typeof botId !== 'string' || botId.length === 0) {
+        return;
+      }
+      const belongsToOrg = runtimeStore.bots.some(
+        (b) => b.id === botId && b.organizationId === user.organizationId
+      );
+      if (belongsToOrg) {
         socket.join(`bot:${botId}`);
       }
     });

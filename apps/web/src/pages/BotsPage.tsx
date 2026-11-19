@@ -1,6 +1,5 @@
 import { FormEvent, useEffect, useId, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { io } from 'socket.io-client';
 import {
   Bot,
   Copy,
@@ -18,6 +17,7 @@ import {
   WhatsAppStatusEvent
 } from '@bothub/shared';
 import { botsApi, flowsApi } from '../lib/api.js';
+import { createAuthenticatedSocket } from '../lib/socket.js';
 import { BotConfigTabs } from '../components/bots/BotConfigTabs.js';
 import { useAuthStore } from '../store/auth.store.js';
 
@@ -40,7 +40,7 @@ export function BotsPage() {
   const [newBotDriver, setNewBotDriver] = useState<WhatsAppDriverType>('CHATWOOT');
   const [newBotFlowId, setNewBotFlowId] = useState<string>('');
 
-  const user = useAuthStore((s) => s.user);
+  const accessToken = useAuthStore((s) => s.accessToken);
   const selectedBot = bots.find((b) => b.id === selectedBotId) ?? bots[0] ?? null;
 
   useEffect(() => {
@@ -67,13 +67,13 @@ export function BotsPage() {
   }, []);
 
   useEffect(() => {
-    const wsUrl = import.meta.env.VITE_WS_URL || undefined;
-    const socket = io(wsUrl, {
-      auth: {
-        organizationId: user?.organizationId
-      },
-      transports: ['websocket', 'polling']
-    });
+    if (!accessToken) {
+      return;
+    }
+    const socket = createAuthenticatedSocket();
+    if (!socket) {
+      return;
+    }
 
     socket.on('whatsapp:qr', (event: WhatsAppQrEvent) => {
       const qrImage = event.qrDataUrl ?? event.qrCodeData ?? null;
@@ -120,7 +120,7 @@ export function BotsPage() {
     return () => {
       socket.disconnect();
     };
-  }, [user?.organizationId]);
+  }, [accessToken]);
 
   async function handleCreateBot(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
