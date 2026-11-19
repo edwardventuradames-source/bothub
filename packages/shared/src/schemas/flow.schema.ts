@@ -44,7 +44,7 @@ export const FlowNodeSchema = z.object({
   id: z.string(),
   type: FlowNodeTypeSchema,
   position: FlowNodePositionSchema,
-  data: z.record(z.unknown())
+  data: z.record(z.string(), z.unknown())
 });
 export type FlowNode = z.infer<typeof FlowNodeSchema>;
 
@@ -80,7 +80,7 @@ export const FlowSimulationRequestSchema = z.object({
   inputMessage: z.string().min(1).max(2000),
   currentNodeId: z.string().nullable().optional(),
   awaitingQuestionNodeId: z.string().nullable().optional(),
-  variables: z.record(z.string()).default({}),
+  variables: z.record(z.string(), z.string()).default({}),
   tags: z.array(z.string()).default([])
 });
 export type FlowSimulationRequest = z.infer<typeof FlowSimulationRequestSchema>;
