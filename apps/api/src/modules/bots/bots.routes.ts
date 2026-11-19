@@ -29,6 +29,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request) => {
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      runtimeStore.syncBotLiveCounters(orgId);
       return {
         bots: runtimeStore.bots.filter((item) => item.organizationId === orgId)
       };
@@ -46,6 +47,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      runtimeStore.syncBotLiveCounters(orgId);
       const bot = runtimeStore.bots.find(
         (item) => item.id === request.params.id && item.organizationId === orgId
       );
@@ -372,6 +374,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      runtimeStore.syncBotLiveCounters(orgId);
       const bot = runtimeStore.bots.find(
         (item) => item.id === request.params.id && item.organizationId === orgId
       );
@@ -401,6 +404,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      runtimeStore.syncBotLiveCounters(orgId);
       const bot = runtimeStore.bots.find(
         (item) => item.id === request.params.id && item.organizationId === orgId
       );
@@ -430,6 +434,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      runtimeStore.syncBotLiveCounters(orgId);
       const bot = runtimeStore.bots.find(
         (item) => item.id === request.params.id && item.organizationId === orgId
       );
@@ -494,6 +499,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      runtimeStore.syncBotLiveCounters(orgId);
       const bot = runtimeStore.bots.find(
         (item) => item.id === request.params.id && item.organizationId === orgId
       );
@@ -530,6 +536,7 @@ export async function registerBotsRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      runtimeStore.syncBotLiveCounters(orgId);
       const bot = runtimeStore.bots.find(
         (item) => item.id === request.params.id && item.organizationId === orgId
       );

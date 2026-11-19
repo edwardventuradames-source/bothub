@@ -39,6 +39,7 @@ export const CreateBotInputSchema = z.object({
   activeFlowId: z.string().nullable().optional(),
   isActive: z.boolean().default(true),
   timezone: z.string().default('America/Bogota'),
+  businessHoursEnabled: z.boolean().default(false),
   outOfHoursMessage: z.string().max(1000).optional().nullable(),
   inactivityTimeoutMinutes: z.number().int().min(1).max(1440).default(15),
   inactivityCloseMessage: z.string().max(1000).optional().nullable(),
@@ -117,6 +118,7 @@ export interface BotDto {
   activeFlowId: string | null;
   activeFlowName: string | null;
   timezone: string;
+  businessHoursEnabled?: boolean;
   outOfHoursMessage: string;
   inactivityTimeoutMinutes: number;
   inactivityCloseMessage: string;

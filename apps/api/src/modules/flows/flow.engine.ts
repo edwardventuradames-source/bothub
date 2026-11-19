@@ -11,13 +11,45 @@ import {
   QuestionValidationType
 } from '@bothub/shared';
 import { executeAiPromptNode, executeHttpRequestNode } from './flow.actions.js';
+import { safeRegexTest } from '../../lib/safe-regex.js';
 
 const MAX_GRAPH_STEPS_PER_TURN = 15;
 const MAX_DELAY_SECONDS = 15;
+const MAX_LIVE_DELAY_MS = 2500;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const NATIONAL_ID_REGEX = /^\d{6,12}$/;
-const DATE_REGEX = /^(\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4})$/;
+const ISO_DATE_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
+const SLASH_DATE_REGEX = /^(\d{2})\/(\d{2})\/(\d{4})$/;
 const NUMERIC_PREFIX_REGEX = /^\d+[.)\-\s]+/;
+
+function isValidCalendarDate(raw: string): boolean {
+  let year = 0;
+  let month = 0;
+  let day = 0;
+  const isoMatch = raw.match(ISO_DATE_REGEX);
+  if (isoMatch) {
+    year = Number(isoMatch[1]);
+    month = Number(isoMatch[2]);
+    day = Number(isoMatch[3]);
+  } else {
+    const slashMatch = raw.match(SLASH_DATE_REGEX);
+    if (!slashMatch) {
+      return false;
+    }
+    day = Number(slashMatch[1]);
+    month = Number(slashMatch[2]);
+    year = Number(slashMatch[3]);
+  }
+  if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+  const constructed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    constructed.getUTCFullYear() === year &&
+    constructed.getUTCMonth() === month - 1 &&
+    constructed.getUTCDate() === day
+  );
+}
 
 export interface FlowExecutionOptions {
   isLiveExecution?: boolean;
@@ -69,7 +101,7 @@ export function validateQuestionAnswer(
     }
     case 'DATE':
       return {
-        valid: DATE_REGEX.test(trimmed),
+        valid: isValidCalendarDate(trimmed),
         normalizedValue: trimmed
       };
     case 'TEXT':
@@ -95,16 +127,22 @@ function evaluateConditionNode(
   switch (operator) {
     case 'EQUALS':
       return candidateLower === compareValue;
+    case 'NOT_EQUALS':
+      return candidateLower !== compareValue;
     case 'NOT_EMPTY':
       return candidateRaw.length > 0;
-    case 'GREATER_THAN':
-      return Number(candidateRaw) > Number(compareValue);
+    case 'GREATER_THAN': {
+      const left = Number(candidateRaw);
+      const right = Number(compareValue);
+      return Number.isFinite(left) && Number.isFinite(right) && left > right;
+    }
+    case 'LESS_THAN': {
+      const left = Number(candidateRaw);
+      const right = Number(compareValue);
+      return Number.isFinite(left) && Number.isFinite(right) && left < right;
+    }
     case 'REGEX':
-      try {
-        return new RegExp(String(node.data.compareValue ?? ''), 'i').test(candidateRaw);
-      } catch {
-        return false;
-      }
+      return safeRegexTest(String(node.data.compareValue ?? ''), candidateRaw);
     case 'CONTAINS':
     default:
       return candidateLower.includes(compareValue);
@@ -217,13 +255,7 @@ function evaluateTriggerMatch(node: FlowNode, inputMessage: string): boolean {
     case 'EXACT':
       return candidates.some((kw) => normalizedInput === kw.toLowerCase());
     case 'REGEX':
-      return candidates.some((pattern) => {
-        try {
-          return new RegExp(pattern, 'i').test(inputMessage.trim());
-        } catch {
-          return false;
-        }
-      });
+      return candidates.some((pattern) => safeRegexTest(pattern, inputMessage.trim()));
     case 'CONTAINS':
     default:
       return candidates.some((kw) => normalizedInput.includes(kw.toLowerCase()));
@@ -236,9 +268,14 @@ export async function executeFlowSimulationStep(
   request: FlowSimulationRequest,
   options: FlowExecutionOptions = {}
 ): Promise<FlowSimulationResponse> {
+  const defaultVariables: Record<string, string> = options.isLiveExecution
+    ? {}
+    : {
+        nombre: 'Cliente Demo',
+        telefono: '+57 300 000 0000'
+      };
   const variables: Record<string, string> = {
-    nombre: 'Cliente Demo',
-    telefono: '+57 300 000 0000',
+    ...defaultVariables,
     ...request.variables,
     ultimo_mensaje: request.inputMessage.trim()
   };
@@ -395,8 +432,21 @@ export async function executeFlowSimulationStep(
   }
 
   let stepsExecuted = 0;
+  const visitedNodeIds = new Set<string>();
 
   while (activeNode && stepsExecuted < MAX_GRAPH_STEPS_PER_TURN) {
+    if (visitedNodeIds.has(activeNode.id)) {
+      trace.push({
+        nodeId: activeNode.id,
+        nodeType: activeNode.type,
+        title: String(activeNode.data.title || activeNode.type),
+        detail: 'Ejecución detenida para evitar ciclo infinito en el grafo.',
+        timestamp: new Date().toISOString()
+      });
+      activeNode = undefined;
+      break;
+    }
+    visitedNodeIds.add(activeNode.id);
     stepsExecuted += 1;
     const nodeTitle = String(activeNode.data.title || activeNode.type);
 
@@ -553,7 +603,8 @@ export async function executeFlowSimulationStep(
           if (options.onTyping) {
             await options.onTyping(delayMs);
           }
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          const boundedLiveWait = Math.min(delayMs, MAX_LIVE_DELAY_MS);
+          await new Promise((resolve) => setTimeout(resolve, boundedLiveWait));
         }
 
         trace.push({

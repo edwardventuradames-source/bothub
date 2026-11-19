@@ -479,7 +479,27 @@ class RuntimeStore {
       .map(({ encryptedSecret: _enc, ...publicItem }) => publicItem);
   }
 
+  public syncBotLiveCounters(organizationId?: string): void {
+    for (const bot of this.bots) {
+      if (organizationId && bot.organizationId !== organizationId) {
+        continue;
+      }
+      const botConversations = this.conversations.filter((conv) => conv.botId === bot.id);
+      bot.activeConversations = botConversations.filter(
+        (conv) => conv.status !== 'RESOLVED'
+      ).length;
+      const handoffs = botConversations.filter(
+        (conv) => conv.status === 'PENDING_AGENT' || conv.status === 'AGENT_ACTIVE'
+      ).length;
+      bot.handoffRate =
+        botConversations.length > 0
+          ? Math.round((handoffs / botConversations.length) * 1000) / 10
+          : 0;
+    }
+  }
+
   public getDashboardMetrics(organizationId?: string): DashboardMetricsDto {
+    this.syncBotLiveCounters(organizationId);
     const scopedBots = organizationId
       ? this.bots.filter((bot) => bot.organizationId === organizationId)
       : this.bots;
@@ -489,7 +509,17 @@ class RuntimeStore {
       : this.conversations;
 
     const activeBots = scopedBots.filter((bot) => bot.status === 'CONNECTED').length;
-    const messagesToday = scopedBots.reduce((sum, bot) => sum + bot.messagesToday, 0);
+    const messagesTodayFromConvs = scopedConversations.reduce((sum, conv) => {
+      const todayKey = new Date().toISOString().slice(0, 10);
+      return (
+        sum +
+        conv.messages.filter((msg) => msg.createdAt.slice(0, 10) === todayKey).length
+      );
+    }, 0);
+    const messagesToday = Math.max(
+      scopedBots.reduce((sum, bot) => sum + bot.messagesToday, 0),
+      messagesTodayFromConvs
+    );
     const activeConversations = scopedConversations.filter(
       (conv) => conv.status !== 'RESOLVED'
     ).length;
@@ -498,11 +528,99 @@ class RuntimeStore {
     ).length;
 
     const automationRatePercent =
-      activeConversations > 0
+      scopedConversations.length > 0
         ? Math.round(
-            ((activeConversations - handoffCountToday) / activeConversations) * 1000
+            ((scopedConversations.length - handoffCountToday) /
+              scopedConversations.length) *
+              1000
           ) / 10
         : 0;
+
+    const hourBuckets = [0, 3, 6, 9, 12, 15, 18, 21].map((hour) => ({
+      hour,
+      label: `${String(hour).padStart(2, '0')}:00`,
+      inbound: 0,
+      outbound: 0
+    }));
+    const nowMs = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    for (const conv of scopedConversations) {
+      for (const msg of conv.messages) {
+        const msgTime = Date.parse(msg.createdAt);
+        if (Number.isNaN(msgTime) || nowMs - msgTime > oneDayMs) {
+          continue;
+        }
+        const msgHour = new Date(msgTime).getHours();
+        const bucketIdx = Math.min(7, Math.floor(msgHour / 3));
+        const bucket = hourBuckets[bucketIdx];
+        if (!bucket) continue;
+        if (msg.senderType === 'CONTACT') {
+          bucket.inbound += 1;
+        } else if (msg.senderType === 'BOT' || msg.senderType === 'AGENT') {
+          bucket.outbound += 1;
+        }
+      }
+    }
+
+    const weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
+    const weekdayNames: Record<number, string> = {
+      0: 'Dom',
+      1: 'Lun',
+      2: 'Mar',
+      3: 'Mié',
+      4: 'Jue',
+      5: 'Vie',
+      6: 'Sáb'
+    };
+    const weeklyMap = new Map<number, { resolvedByBot: number; transferredToAgent: number }>();
+    for (const dayIdx of weekdayOrder) {
+      weeklyMap.set(dayIdx, { resolvedByBot: 0, transferredToAgent: 0 });
+    }
+    for (const conv of scopedConversations) {
+      const activityDate = new Date(conv.lastActivityAt);
+      const dayIdx = Number.isNaN(activityDate.getTime())
+        ? new Date().getDay()
+        : activityDate.getDay();
+      const entry = weeklyMap.get(dayIdx);
+      if (!entry) continue;
+      if (conv.status === 'PENDING_AGENT' || conv.status === 'AGENT_ACTIVE') {
+        entry.transferredToAgent += 1;
+      } else {
+        entry.resolvedByBot += 1;
+      }
+    }
+    const weeklyFlowPerformance = weekdayOrder.map((dayIdx) => {
+      const entry = weeklyMap.get(dayIdx) ?? { resolvedByBot: 0, transferredToAgent: 0 };
+      return {
+        day: weekdayNames[dayIdx] ?? '',
+        resolvedByBot: entry.resolvedByBot,
+        transferredToAgent: entry.transferredToAgent
+      };
+    });
+
+    const nodeCounts = new Map<
+      string,
+      { nodeTitle: string; flowName: string; executions: number }
+    >();
+    for (const conv of scopedConversations) {
+      const flowName = conv.currentFlowName || 'Flujo principal';
+      for (const step of conv.executionTrace) {
+        const key = `${flowName}::${step.title || step.nodeType}`;
+        const existing = nodeCounts.get(key);
+        if (existing) {
+          existing.executions += 1;
+        } else {
+          nodeCounts.set(key, {
+            nodeTitle: step.title || step.nodeType,
+            flowName,
+            executions: 1
+          });
+        }
+      }
+    }
+    const topTriggeredNodes = Array.from(nodeCounts.values())
+      .sort((a, b) => b.executions - a.executions)
+      .slice(0, 5);
 
     return {
       activeBots,
@@ -511,9 +629,13 @@ class RuntimeStore {
       activeConversations,
       handoffCountToday,
       automationRatePercent,
-      hourlyMessages: [],
-      weeklyFlowPerformance: [],
-      topTriggeredNodes: []
+      hourlyMessages: hourBuckets.map(({ label, inbound, outbound }) => ({
+        label,
+        inbound,
+        outbound
+      })),
+      weeklyFlowPerformance,
+      topTriggeredNodes
     };
   }
 }

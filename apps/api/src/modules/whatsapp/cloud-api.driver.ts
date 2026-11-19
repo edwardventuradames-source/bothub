@@ -294,6 +294,7 @@ export class CloudApiDriver implements WhatsAppProviderDriver {
       fromPhone: input.fromPhone,
       contactName: input.contactName,
       text: input.text,
+      externalMessageId: input.externalMessageId,
       io: io ?? this.io ?? undefined,
       sendReply: async (reply) => {
         await this.sendReply(botId, input.fromPhone, reply);

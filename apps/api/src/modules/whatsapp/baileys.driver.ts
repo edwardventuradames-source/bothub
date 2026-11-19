@@ -468,6 +468,7 @@ export class BaileysDriver implements WhatsAppProviderDriver {
               fromPhone,
               contactName,
               text,
+              externalMessageId: msg.key.id ?? undefined,
               io: this.io ?? undefined,
               onTyping: async () => {
                 await sock.sendPresenceUpdate('composing', remoteJid).catch(() => undefined);

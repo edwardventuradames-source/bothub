@@ -20,8 +20,11 @@ import { redis } from './redis.js';
 import { logger } from './logger.js';
 import { createDefaultBusinessHours } from './runtime-seed-graphs.js';
 import {
+  StoredApiKeyRecord,
   StoredChatwootSecrets,
   StoredCloudApiSecrets,
+  StoredOutboundWebhookRecord,
+  StoredUserRecord,
   maskSecretValue
 } from './runtime-store.js';
 import { decryptSecret } from './crypto.js';
@@ -87,6 +90,7 @@ export async function initializeRedisIfConfigured(): Promise<void> {
 }
 
 export async function hydrateStoreFromDatabase(target: {
+  users: StoredUserRecord[];
   bots: BotDto[];
   chatwootSecrets: Map<string, StoredChatwootSecrets>;
   cloudApiSecrets: Map<string, StoredCloudApiSecrets>;
@@ -94,12 +98,33 @@ export async function hydrateStoreFromDatabase(target: {
   contacts: ContactDto[];
   conversations: ConversationDto[];
   logs: BotLogDto[];
+  apiKeys: StoredApiKeyRecord[];
+  outboundWebhooks: StoredOutboundWebhookRecord[];
 }): Promise<boolean> {
   if (!isDatabaseConfigured()) {
     return false;
   }
 
   try {
+    const dbUsers = await prisma.user.findMany({
+      include: { organization: true }
+    });
+    if (dbUsers.length > 0) {
+      target.users = dbUsers.map((u) => ({
+        id: u.id,
+        organizationId: u.organizationId,
+        organizationName: u.organization.name,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        isActive: u.isActive,
+        lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
+        createdAt: u.createdAt.toISOString(),
+        passwordHash: u.passwordHash,
+        tokenVersion: 1
+      }));
+    }
+
     const dbBots = await prisma.bot.findMany({
       include: {
         chatwootConfig: true,
@@ -116,10 +141,6 @@ export async function hydrateStoreFromDatabase(target: {
       },
       orderBy: { createdAt: 'desc' }
     });
-
-    if (dbBots.length === 0) {
-      return false;
-    }
 
     const hydratedBots: BotDto[] = [];
     const hydratedFlows: FlowDto[] = [];
@@ -251,6 +272,7 @@ export async function hydrateStoreFromDatabase(target: {
         activeFlowId: mainFlow?.id ?? null,
         activeFlowName: mainFlow?.name ?? null,
         timezone: dbBot.businessHours?.timezone ?? 'America/Bogota',
+        businessHoursEnabled: dbBot.businessHours?.isEnabled ?? false,
         outOfHoursMessage:
           dbBot.businessHours?.outOfHoursMessage ??
           'Gracias por comunicarte. Estamos fuera de horario.',
@@ -383,6 +405,7 @@ export async function hydrateStoreFromDatabase(target: {
 
     const hydratedLogs: BotLogDto[] = dbLogs.map((l) => ({
       id: l.id,
+      organizationId: l.organizationId,
       botId: l.botId,
       botName: l.bot?.name ?? 'Sistema BotHub',
       level: l.level as BotLogDto['level'],
@@ -392,11 +415,53 @@ export async function hydrateStoreFromDatabase(target: {
       createdAt: l.createdAt.toISOString()
     }));
 
-    target.bots = hydratedBots;
-    target.flows = hydratedFlows;
-    target.contacts = hydratedContacts;
-    target.conversations = hydratedConversations;
-    target.logs = hydratedLogs;
+    const dbApiKeys = await prisma.apiKey.findMany({
+      where: { isActive: true },
+      orderBy: { createdAt: 'desc' }
+    });
+    if (dbApiKeys.length > 0) {
+      target.apiKeys = dbApiKeys.map((k) => ({
+        id: k.id,
+        organizationId: k.organizationId,
+        name: k.name,
+        keyPrefix: k.keyPrefix,
+        keyHash: k.keyHash,
+        scopes: ['bots:read', 'flows:execute', 'webhooks:write'],
+        lastUsedAt: k.lastUsedAt ? k.lastUsedAt.toISOString() : null,
+        createdAt: k.createdAt.toISOString()
+      }));
+    }
+
+    const dbWebhooks = await prisma.webhookConfig.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    if (dbWebhooks.length > 0) {
+      target.outboundWebhooks = dbWebhooks.map((w) => {
+        let masked = '••••••••';
+        try {
+          masked = maskSecretValue(decryptSecret(w.encryptedSecret));
+        } catch {
+          void 0;
+        }
+        return {
+          id: w.id,
+          organizationId: w.organizationId,
+          name: w.name,
+          targetUrl: w.targetUrl,
+          events: Array.isArray(w.eventsJson) ? (w.eventsJson as string[]) : [],
+          maskedSecret: masked,
+          encryptedSecret: w.encryptedSecret,
+          isActive: w.isActive,
+          createdAt: w.createdAt.toISOString()
+        };
+      });
+    }
+
+    if (hydratedBots.length > 0) target.bots = hydratedBots;
+    if (hydratedFlows.length > 0) target.flows = hydratedFlows;
+    if (hydratedContacts.length > 0) target.contacts = hydratedContacts;
+    if (hydratedConversations.length > 0) target.conversations = hydratedConversations;
+    if (hydratedLogs.length > 0) target.logs = hydratedLogs;
 
     logger.info(
       { bots: hydratedBots.length, flows: hydratedFlows.length },
@@ -458,16 +523,33 @@ export async function syncBotRecordToDb(
       where: { botId: bot.id },
       update: {
         timezone: bot.timezone,
+        isEnabled: Boolean(bot.businessHoursEnabled),
         scheduleJson: toJsonInput(bot.businessHours),
         outOfHoursMessage: bot.outOfHoursMessage
       },
       create: {
         botId: bot.id,
         timezone: bot.timezone,
+        isEnabled: Boolean(bot.businessHoursEnabled),
         scheduleJson: toJsonInput(bot.businessHours),
         outOfHoursMessage: bot.outOfHoursMessage
       }
     });
+
+    await prisma.quickReply.deleteMany({ where: { botId: bot.id } });
+    if (bot.quickReplies.length > 0) {
+      await prisma.quickReply.createMany({
+        data: bot.quickReplies.map((qr) => ({
+          id: qr.id,
+          botId: bot.id,
+          title: qr.title,
+          keywords: qr.keywords,
+          matchMode: qr.matchMode === 'EXACT' || qr.matchMode === 'REGEX' ? qr.matchMode : 'CONTAINS',
+          responseText: qr.responseText,
+          isActive: qr.isActive
+        }))
+      });
+    }
   } catch (err) {
     logger.warn({ botId: bot.id, err }, 'Failed syncing bot record to PostgreSQL');
   }
@@ -550,6 +632,27 @@ export async function syncFlowToDb(flow: FlowDto): Promise<void> {
         publishedVersion: flow.publishedVersion ? flow.activeVersionNumber : 0
       }
     });
+
+    if (flow.publishedVersion) {
+      await prisma.flowVersion.upsert({
+        where: {
+          flowId_versionNumber: {
+            flowId: flow.id,
+            versionNumber: flow.publishedVersion.versionNumber
+          }
+        },
+        update: {
+          nodes: toJsonInput(flow.publishedVersion.nodes),
+          edges: toJsonInput(flow.publishedVersion.edges)
+        },
+        create: {
+          flowId: flow.id,
+          versionNumber: flow.publishedVersion.versionNumber,
+          nodes: toJsonInput(flow.publishedVersion.nodes),
+          edges: toJsonInput(flow.publishedVersion.edges)
+        }
+      });
+    }
   } catch (err) {
     logger.warn({ flowId: flow.id, err }, 'Failed syncing flow to PostgreSQL');
   }
@@ -625,6 +728,26 @@ export async function syncConversationStateToDb(
     });
   } catch (err) {
     logger.warn({ conversationId: conversation.id, err }, 'Failed syncing conversation to PostgreSQL');
+  }
+}
+
+export async function syncContactToDb(contact: ContactDto): Promise<void> {
+  if (!isDatabaseConfigured()) return;
+  try {
+    await prisma.contact.updateMany({
+      where: {
+        id: contact.id,
+        organizationId: contact.organizationId
+      },
+      data: {
+        name: contact.name,
+        variablesJson: toJsonInput(contact.variables),
+        tagsJson: toJsonInput(contact.tags),
+        lastInteractionAt: new Date(contact.lastInteractionAt)
+      }
+    });
+  } catch (err) {
+    logger.warn({ contactId: contact.id, err }, 'Failed syncing contact to PostgreSQL');
   }
 }
 

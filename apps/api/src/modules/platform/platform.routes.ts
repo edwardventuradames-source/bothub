@@ -15,6 +15,7 @@ import {
 } from '../../lib/runtime-store.js';
 import {
   isDatabaseConfigured,
+  syncContactToDb,
   syncConversationStateToDb
 } from '../../lib/persistence.js';
 import { prisma } from '../../lib/prisma.js';
@@ -234,6 +235,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       }
       contact.lastInteractionAt = new Date().toISOString();
       runtimeStore.persistStateToDisk();
+      void syncContactToDb(contact);
       return { contact };
     }
   );

@@ -136,6 +136,7 @@ export function BotsPage() {
       driver: newBotDriver,
       activeFlowId: newBotFlowId || null,
       isActive: true,
+      businessHoursEnabled: false,
       timezone: 'America/Bogota',
       outOfHoursMessage:
         'Gracias por escribirnos. En este momento estamos fuera de horario.',

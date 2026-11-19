@@ -2,10 +2,17 @@ import crypto from 'node:crypto';
 import { Server as SocketIOServer } from 'socket.io';
 import {
   BotDto,
+  ContactDto,
   ConversationDto,
   FlowSimulationBotReply,
   FlowSimulationResponse
 } from '@bothub/shared';
+import {
+  isBotContactRateLimited,
+  isDuplicateInboundMessage,
+  isWithinBotBusinessHours,
+  matchBotQuickReply
+} from '../../lib/bot-runtime-utils.js';
 import { runtimeStore } from '../../lib/runtime-store.js';
 import { syncConversationStateToDb } from '../../lib/persistence.js';
 import {
@@ -23,6 +30,7 @@ export interface InboundWhatsAppMessageParams {
   fromPhone: string;
   contactName: string;
   text: string;
+  externalMessageId?: string;
   io?: SocketIOServer;
   sendReply?: (reply: FlowSimulationBotReply) => Promise<void>;
   onTyping?: (delayMs: number) => Promise<void>;
@@ -42,26 +50,39 @@ export class BotNotFoundError extends Error {
   }
 }
 
-function matchQuickReply(bot: BotDto, content: string) {
-  const lowerInput = content.trim().toLowerCase();
-  return bot.quickReplies.find((qr) => {
-    if (!qr.isActive) return false;
-    return qr.keywords.some((kw) => {
-      const lowerKw = kw.toLowerCase().trim();
-      if (!lowerKw) return false;
-      if (qr.matchMode === 'EXACT') {
-        return lowerInput === lowerKw;
+async function deliverWhatsAppReply(
+  bot: BotDto,
+  contact: ContactDto,
+  reply: FlowSimulationBotReply,
+  sendReply: ((reply: FlowSimulationBotReply) => Promise<void>) | undefined,
+  io: SocketIOServer | undefined
+): Promise<boolean> {
+  if (!sendReply) {
+    return true;
+  }
+  try {
+    await sendReply(reply);
+    return true;
+  } catch (err) {
+    const errMessage =
+      err instanceof Error ? err.message : 'Error entregando mensaje saliente.';
+    const errLog = runtimeStore.appendLog({
+      organizationId: bot.organizationId,
+      botId: bot.id,
+      botName: bot.name,
+      level: 'ERROR',
+      event: 'whatsapp.send.error',
+      message: `Fallo enviando respuesta a ${contact.phoneNumber}: ${errMessage}`,
+      metadata: {
+        replyId: reply.id,
+        toPhone: contact.phoneNumber
       }
-      if (qr.matchMode === 'REGEX') {
-        try {
-          return new RegExp(kw, 'i').test(content.trim());
-        } catch {
-          return false;
-        }
-      }
-      return lowerInput.includes(lowerKw);
     });
-  });
+    if (io) {
+      io.to(`org:${bot.organizationId}`).emit('log:new', errLog);
+    }
+    return false;
+  }
 }
 
 async function mirrorReplyToChatwootIfConfigured(
@@ -76,14 +97,18 @@ async function mirrorReplyToChatwootIfConfigured(
     return;
   }
 
-  await sendMessageToChatwootApi({
-    config: cwConfig,
-    apiAccessToken: cwSecrets.apiAccessToken,
-    conversationId: conversation.chatwootConversationId,
-    content,
-    isPrivate: options.isPrivate,
-    messageType: options.messageType
-  });
+  try {
+    await sendMessageToChatwootApi({
+      config: cwConfig,
+      apiAccessToken: cwSecrets.apiAccessToken,
+      conversationId: conversation.chatwootConversationId,
+      content,
+      isPrivate: options.isPrivate,
+      messageType: options.messageType
+    });
+  } catch {
+    void 0;
+  }
 }
 
 export async function processInboundWhatsAppMessage(
@@ -101,6 +126,32 @@ export async function processInboundWhatsAppMessage(
   const trimmedText = params.text.trim();
   if (!trimmedText) {
     return { accepted: true, action: 'ignored_empty_message' };
+  }
+
+  if (
+    params.externalMessageId &&
+    isDuplicateInboundMessage(`wa:${bot.id}:${params.externalMessageId}`)
+  ) {
+    return { accepted: true, action: 'duplicate_message_ignored' };
+  }
+
+  if (isBotContactRateLimited(bot.id, params.fromPhone, bot.rateLimitPerMinute)) {
+    const rateLog = runtimeStore.appendLog({
+      organizationId: bot.organizationId,
+      botId: bot.id,
+      botName: bot.name,
+      level: 'WARN',
+      event: 'whatsapp.rate_limited',
+      message: `Límite de mensajes por minuto excedido para ${params.fromPhone}.`,
+      metadata: {
+        fromPhone: params.fromPhone,
+        rateLimitPerMinute: bot.rateLimitPerMinute
+      }
+    });
+    if (params.io) {
+      params.io.to(`org:${bot.organizationId}`).emit('log:new', rateLog);
+    }
+    return { accepted: true, action: 'rate_limited' };
   }
 
   let contact = runtimeStore.contacts.find(
@@ -155,8 +206,8 @@ export async function processInboundWhatsAppMessage(
       assignedAgentName: null,
       currentFlowName: bot.activeFlowName,
       currentNodeId: null,
-      collectedVariables: contact.variables,
-      tags: contact.tags,
+      collectedVariables: { ...contact.variables },
+      tags: [...contact.tags],
       handoffReason: null,
       lastMessagePreview: trimmedText,
       lastActivityAt: nowIso,
@@ -164,6 +215,12 @@ export async function processInboundWhatsAppMessage(
       executionTrace: []
     };
     runtimeStore.conversations.unshift(conversation);
+  } else if (conversation.status === 'RESOLVED') {
+    conversation.status = 'BOT_ACTIVE';
+    conversation.assignedAgentName = null;
+    conversation.handoffReason = null;
+    conversation.currentNodeId = null;
+    contact.conversationsCount += 1;
   }
 
   conversation.messages.push({
@@ -199,35 +256,93 @@ export async function processInboundWhatsAppMessage(
     messageType: 'incoming'
   });
 
-  const matchedQuickReply = matchQuickReply(bot, trimmedText);
+  if (!isWithinBotBusinessHours(bot)) {
+    const outOfHoursReply: FlowSimulationBotReply = {
+      id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+      text:
+        bot.outOfHoursMessage ||
+        'Gracias por comunicarte. En este momento estamos fuera de horario.'
+    };
+    await deliverWhatsAppReply(
+      bot,
+      contact,
+      outOfHoursReply,
+      params.sendReply,
+      params.io
+    );
+    await mirrorReplyToChatwootIfConfigured(bot, conversation, outOfHoursReply.text);
+
+    const outIso = new Date().toISOString();
+    conversation.messages.push({
+      id: outOfHoursReply.id,
+      senderType: 'BOT',
+      senderName: bot.name,
+      content: outOfHoursReply.text,
+      createdAt: outIso
+    });
+    conversation.lastMessagePreview = outOfHoursReply.text;
+    conversation.lastActivityAt = outIso;
+    bot.messagesToday += 2;
+
+    const logEntry = runtimeStore.appendLog({
+      organizationId: bot.organizationId,
+      botId: bot.id,
+      botName: bot.name,
+      level: 'INFO',
+      event: 'whatsapp.out_of_hours',
+      message: `Mensaje fuera de horario respondido a ${contact.phoneNumber}.`
+    });
+    runtimeStore.persistStateToDisk();
+    void syncConversationStateToDb(contact, conversation);
+
+    if (params.io) {
+      params.io.to(`org:${bot.organizationId}`).emit('log:new', logEntry);
+      params.io.to(`org:${bot.organizationId}`).emit('conversation:updated', conversation);
+    }
+
+    return {
+      accepted: true,
+      action: 'out_of_hours_replied',
+      conversation
+    };
+  }
+
+  const matchedQuickReply = matchBotQuickReply(bot, trimmedText);
   if (matchedQuickReply) {
     const reply: FlowSimulationBotReply = {
       id: `reply-${crypto.randomUUID().slice(0, 8)}`,
       text: matchedQuickReply.responseText
     };
-    if (params.sendReply) {
-      await params.sendReply(reply);
-    }
+    await deliverWhatsAppReply(
+      bot,
+      contact,
+      reply,
+      params.sendReply,
+      params.io
+    );
     await mirrorReplyToChatwootIfConfigured(bot, conversation, reply.text);
 
+    const replyIso = new Date().toISOString();
     conversation.messages.push({
       id: reply.id,
       senderType: 'BOT',
       senderName: bot.name,
       content: reply.text,
-      createdAt: new Date().toISOString()
+      createdAt: replyIso
     });
     conversation.lastMessagePreview = reply.text;
-    conversation.lastActivityAt = new Date().toISOString();
+    conversation.lastActivityAt = replyIso;
     bot.messagesToday += 2;
 
     const logEntry = runtimeStore.appendLog({
+      organizationId: bot.organizationId,
       botId: bot.id,
       botName: bot.name,
       level: 'INFO',
       event: 'whatsapp.quick_reply.sent',
       message: `Respuesta rápida "${matchedQuickReply.title}" enviada a ${contact.phoneNumber}.`
     });
+    runtimeStore.persistStateToDisk();
     void syncConversationStateToDb(contact, conversation);
 
     if (params.io) {
@@ -268,9 +383,13 @@ export async function processInboundWhatsAppMessage(
   }
 
   const activeGraph = resolveActiveFlowGraph(flow);
-  const currentNode = activeGraph.nodes.find(
-    (n) => n.id === conversation.currentNodeId
-  );
+  let currentNode = conversation.currentNodeId
+    ? activeGraph.nodes.find((n) => n.id === conversation.currentNodeId)
+    : undefined;
+  if (conversation.currentNodeId && !currentNode) {
+    conversation.currentNodeId = null;
+    currentNode = undefined;
+  }
   const isAwaitingInteractiveNode =
     currentNode?.type === 'QUESTION' ||
     currentNode?.type === 'BUTTONS' ||
@@ -285,8 +404,8 @@ export async function processInboundWhatsAppMessage(
       awaitingQuestionNodeId: isAwaitingInteractiveNode
         ? conversation.currentNodeId
         : null,
-      variables: contact.variables,
-      tags: contact.tags
+      variables: { ...contact.variables },
+      tags: [...contact.tags]
     },
     {
       isLiveExecution: true,
@@ -294,28 +413,32 @@ export async function processInboundWhatsAppMessage(
     }
   );
 
-  contact.variables = simulation.variables;
+  contact.variables = { ...simulation.variables };
   if (simulation.variables.cedula) {
     contact.nationalId = simulation.variables.cedula;
   }
   if (simulation.variables.correo || simulation.variables.email) {
     contact.email = simulation.variables.correo || simulation.variables.email;
   }
-  contact.tags = simulation.tags;
+  contact.tags = [...simulation.tags];
   contact.lastInteractionAt = new Date().toISOString();
 
   conversation.currentFlowName = flow.name;
   conversation.currentNodeId = simulation.completed
     ? null
     : (simulation.awaitingQuestionNodeId ?? simulation.nextNodeId);
-  conversation.collectedVariables = simulation.variables;
-  conversation.tags = simulation.tags;
+  conversation.collectedVariables = { ...simulation.variables };
+  conversation.tags = [...simulation.tags];
   conversation.executionTrace.push(...simulation.trace);
 
   for (const reply of simulation.replies) {
-    if (params.sendReply) {
-      await params.sendReply(reply);
-    }
+    await deliverWhatsAppReply(
+      bot,
+      contact,
+      reply,
+      params.sendReply,
+      params.io
+    );
     const formatted = formatBotReplyForChatwoot(reply);
     await mirrorReplyToChatwootIfConfigured(bot, conversation, formatted);
 
@@ -345,12 +468,16 @@ export async function processInboundWhatsAppMessage(
     const cwConfig = runtimeStore.getChatwootConfigDto(bot.id);
     const cwSecrets = runtimeStore.getDecryptedChatwootTokens(bot.id);
     if (cwConfig && cwSecrets && conversation.chatwootConversationId) {
-      await toggleChatwootConversationStatusApi({
-        config: cwConfig,
-        apiAccessToken: cwSecrets.apiAccessToken,
-        conversationId: conversation.chatwootConversationId,
-        status: 'open'
-      });
+      try {
+        await toggleChatwootConversationStatusApi({
+          config: cwConfig,
+          apiAccessToken: cwSecrets.apiAccessToken,
+          conversationId: conversation.chatwootConversationId,
+          status: 'open'
+        });
+      } catch {
+        void 0;
+      }
     }
   }
 
@@ -360,6 +487,7 @@ export async function processInboundWhatsAppMessage(
   conversation.lastActivityAt = new Date().toISOString();
 
   const logEntry = runtimeStore.appendLog({
+    organizationId: bot.organizationId,
     botId: bot.id,
     botName: bot.name,
     level: 'INFO',
@@ -372,6 +500,7 @@ export async function processInboundWhatsAppMessage(
     }
   });
 
+  runtimeStore.persistStateToDisk();
   void syncConversationStateToDb(contact, conversation);
 
   if (params.io) {

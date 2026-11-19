@@ -7,6 +7,7 @@ import {
   SaveFlowGraphInputSchema
 } from '@bothub/shared';
 import { DEFAULT_ORG_ID, runtimeStore } from '../../lib/runtime-store.js';
+import { deleteFlowFromDb, syncBotRecordToDb, syncFlowToDb } from '../../lib/persistence.js';
 import { executeFlowSimulationStep } from './flow.engine.js';
 
 export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
@@ -138,14 +139,17 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       if (targetBot) {
         targetBot.activeFlowId = newFlow.id;
         targetBot.activeFlowName = newFlow.name;
+        void syncBotRecordToDb(targetBot);
       }
 
       runtimeStore.appendLog({
+        organizationId: orgId,
         botId: targetBot?.id ?? null,
         level: 'INFO',
         event: 'flow.created',
         message: `Flujo "${newFlow.name}" creado exitosamente.`
       });
+      void syncFlowToDb(newFlow);
 
       return reply.status(201).send({ flow: newFlow });
     }
@@ -230,6 +234,7 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       flow.updatedAt = nowIso;
 
       runtimeStore.appendLog({
+        organizationId: orgId,
         botId: flow.botId,
         level: 'INFO',
         event: data.publish ? 'flow.published' : 'flow.draft_saved',
@@ -237,6 +242,7 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
           ? `Flujo "${flow.name}" publicado en versión v${flow.activeVersionNumber} (${data.nodes.length} nodos).`
           : `Borrador guardado en "${flow.name}" (${data.nodes.length} nodos, ${data.edges.length} conexiones).`
       });
+      void syncFlowToDb(flow);
 
       return { flow };
     }
@@ -281,11 +287,13 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       flow.updatedAt = nowIso;
 
       runtimeStore.appendLog({
+        organizationId: orgId,
         botId: flow.botId,
         level: 'INFO',
         event: 'flow.version_restored',
         message: `Flujo "${flow.name}" restaurado a la versión v${targetVersion.versionNumber} (${targetVersion.status}).`
       });
+      void syncFlowToDb(flow);
 
       return { flow };
     }
@@ -350,8 +358,22 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
           message: 'El flujo no existe.'
         });
       }
-      runtimeStore.flows.splice(idx, 1);
-      runtimeStore.persistStateToDisk();
+      const [removedFlow] = runtimeStore.flows.splice(idx, 1);
+      for (const bot of runtimeStore.bots) {
+        if (bot.organizationId === orgId && bot.activeFlowId === removedFlow.id) {
+          bot.activeFlowId = null;
+          bot.activeFlowName = null;
+          void syncBotRecordToDb(bot);
+        }
+      }
+      runtimeStore.appendLog({
+        organizationId: orgId,
+        botId: removedFlow.botId,
+        level: 'WARN',
+        event: 'flow.deleted',
+        message: `Flujo "${removedFlow.name}" eliminado.`
+      });
+      void deleteFlowFromDb(removedFlow.id);
       return { success: true };
     }
   );
