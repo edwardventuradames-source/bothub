@@ -263,13 +263,18 @@ export const platformApi = {
   },
   handoffAction: (
     id: string,
-    action: 'RETURN_TO_BOT' | 'TRANSFER_TO_AGENT',
+    action: 'RETURN_TO_BOT' | 'TRANSFER_TO_AGENT' | 'RESOLVE',
     reason?: string
   ) =>
     performRequest<{ conversation: ConversationDto }>(`/conversations/${id}/handoff`, {
       method: 'POST',
       body: JSON.stringify({ action, reason })
     }),
+  syncConversationsChatwoot: () =>
+    performRequest<{ checkedCount: number; updatedCount: number }>(
+      '/conversations/sync-chatwoot',
+      { method: 'POST' }
+    ),
   listContacts: () => performRequest<{ contacts: ContactDto[] }>('/contacts'),
   updateContact: (
     id: string,

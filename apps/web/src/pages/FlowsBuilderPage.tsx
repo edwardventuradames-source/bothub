@@ -33,6 +33,7 @@ import {
 } from '@bothub/shared';
 import { botsApi, flowsApi } from '../lib/api.js';
 import { useAuthStore } from '../store/auth.store.js';
+import { useThemeStore } from '../store/theme.store.js';
 import { FlowSimulatorPanel } from '../components/flows/FlowSimulatorPanel.js';
 import { FlowNodeInspector } from '../components/flows/FlowNodeInspector.js';
 import { CreateFlowDialog, DeleteFlowDialog } from '../components/flows/FlowDialogs.js';
@@ -50,6 +51,7 @@ export function FlowsBuilderPage() {
   const deleteFlowDialogRef = useRef<HTMLDialogElement | null>(null);
 
   const user = useAuthStore((s) => s.user);
+  const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
   const canEditFlows = user?.role === 'ADMIN' || user?.role === 'OPERATOR';
 
   const [flows, setFlows] = useState<FlowDto[]>([]);
@@ -686,6 +688,7 @@ export function FlowsBuilderPage() {
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
+                colorMode={resolvedTheme}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
@@ -694,7 +697,25 @@ export function FlowsBuilderPage() {
               >
                 <Background gap={18} size={1} />
                 <Controls />
-                <MiniMap zoomable pannable className="hidden sm:block" />
+                <MiniMap
+                  zoomable
+                  pannable
+                  style={{ width: 160, height: 120 }}
+                  nodeColor={(node) =>
+                    getFlowNodeAccentColor(
+                      (node.data?.nodeType as FlowNodeType) || 'MESSAGE'
+                    )
+                  }
+                  nodeStrokeColor={resolvedTheme === 'dark' ? '#f8fafc' : '#1e293b'}
+                  nodeStrokeWidth={2}
+                  bgColor={resolvedTheme === 'dark' ? '#0f172a' : '#f8fafc'}
+                  maskColor={
+                    resolvedTheme === 'dark'
+                      ? 'rgba(15, 23, 42, 0.65)'
+                      : 'rgba(203, 213, 225, 0.55)'
+                  }
+                  className="hidden sm:block"
+                />
               </ReactFlow>
             </div>
 

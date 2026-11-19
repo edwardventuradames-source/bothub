@@ -3,8 +3,10 @@ import { useOutletContext } from 'react-router-dom';
 import {
   ArrowRightLeft,
   Bot,
+  CheckCircle2,
   GitBranch,
   MessageSquare,
+  RefreshCw,
   Sparkles,
   Tag,
   UserCheck
@@ -110,7 +112,7 @@ export function ConversationsPage() {
 
   async function handleHandoffToggle(
     convId: string,
-    action: 'RETURN_TO_BOT' | 'TRANSFER_TO_AGENT'
+    action: 'RETURN_TO_BOT' | 'TRANSFER_TO_AGENT' | 'RESOLVE'
   ): Promise<void> {
     if (!canOperate || isUpdating) return;
     setIsUpdating(true);
@@ -118,7 +120,9 @@ export function ConversationsPage() {
       const { conversation } = await platformApi.handoffAction(
         convId,
         action,
-        'Transferencia solicitada desde el monitor de conversaciones BotHub.'
+        action === 'RESOLVE'
+          ? 'Resuelta desde el monitor de conversaciones BotHub.'
+          : 'Transferencia solicitada desde el monitor de conversaciones BotHub.'
       );
       setConversations((prev) =>
         prev.map((item) => (item.id === conversation.id ? conversation : item))
@@ -128,7 +132,9 @@ export function ConversationsPage() {
         text:
           action === 'RETURN_TO_BOT'
             ? 'Conversación devuelta al control automático del bot (#bot).'
-            : 'Conversación transferida a cola de agentes en Chatwoot.'
+            : action === 'RESOLVE'
+              ? 'Conversación marcada como resuelta y sincronizada con Chatwoot.'
+              : 'Conversación transferida a cola de agentes en Chatwoot.'
       });
     } catch (err) {
       setBanner({
@@ -137,6 +143,29 @@ export function ConversationsPage() {
           err instanceof Error
             ? err.message
             : 'No se pudo actualizar el estado de handoff.'
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  }
+
+  async function handleSyncChatwoot(): Promise<void> {
+    if (!canOperate || isUpdating) return;
+    setIsUpdating(true);
+    try {
+      const res = await platformApi.syncConversationsChatwoot();
+      await loadConversations(statusFilter);
+      setBanner({
+        type: 'ok',
+        text: `Sincronización completada: ${res.checkedCount} revisadas, ${res.updatedCount} actualizadas desde Chatwoot.`
+      });
+    } catch (err) {
+      setBanner({
+        type: 'err',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'No se pudo sincronizar el estado con Chatwoot.'
       });
     } finally {
       setIsUpdating(false);
@@ -159,7 +188,18 @@ export function ConversationsPage() {
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {canOperate ? (
+            <button
+              type="button"
+              disabled={isUpdating}
+              onClick={() => void handleSyncChatwoot()}
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-soft-line bg-soft-bg px-3.5 py-2 text-xs font-extrabold text-soft-blue hover:border-soft-blue disabled:opacity-60"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isUpdating ? 'animate-spin' : ''}`} />
+              <span>Sincronizar Chatwoot</span>
+            </button>
+          ) : null}
           {[
             { id: 'ALL', label: 'Todas' },
             { id: 'BOT_ACTIVE', label: '🤖 Bot Activo' },
@@ -249,7 +289,13 @@ export function ConversationsPage() {
                             : 'bg-soft-warning/15 text-soft-warning'
                       }`}
                     >
-                      {conv.status}
+                      {conv.status === 'BOT_ACTIVE'
+                        ? 'Bot Activo'
+                        : conv.status === 'PENDING_AGENT'
+                          ? 'En Chatwoot (Pendiente)'
+                          : conv.status === 'AGENT_ACTIVE'
+                            ? 'Con Agente'
+                            : 'Resuelta'}
                     </span>
                   </div>
                   <span className="truncate text-[11px] font-semibold text-soft-muted">
@@ -278,7 +324,7 @@ export function ConversationsPage() {
                 </div>
 
                 {canOperate ? (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {selectedConversation.status === 'BOT_ACTIVE' ? (
                       <button
                         type="button"
@@ -310,6 +356,20 @@ export function ConversationsPage() {
                         <span>Devolver Control al Bot (#bot)</span>
                       </button>
                     )}
+
+                    {selectedConversation.status !== 'RESOLVED' ? (
+                      <button
+                        type="button"
+                        disabled={isUpdating}
+                        onClick={() =>
+                          void handleHandoffToggle(selectedConversation.id, 'RESOLVE')
+                        }
+                        className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-soft-line bg-soft-bg px-3.5 py-2 text-xs font-extrabold text-soft-ink hover:border-soft-blue disabled:opacity-60"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 text-[#4b830d] dark:text-[#82d616]" />
+                        <span>Marcar Resuelta</span>
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -355,6 +415,16 @@ export function ConversationsPage() {
                         <p className="whitespace-pre-wrap leading-relaxed">
                           {msg.content}
                         </p>
+                        {msg.mediaUrl ? (
+                          <a
+                            href={msg.mediaUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1.5 block truncate text-[11px] underline opacity-90"
+                          >
+                            📎 {msg.mediaUrl}
+                          </a>
+                        ) : null}
                       </div>
                     </div>
                   );

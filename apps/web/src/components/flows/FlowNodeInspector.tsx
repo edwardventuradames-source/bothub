@@ -1,10 +1,11 @@
 import { Edge, Node } from '@xyflow/react';
-import { RefreshCw, Sparkles, Tag, Trash2 } from 'lucide-react';
+import { Sparkles, Trash2 } from 'lucide-react';
 import {
   ChatwootLabelDto,
   FlowNodeType,
   QuestionValidationType
 } from '@bothub/shared';
+import { FlowActionNodesInspector } from './FlowActionNodesInspector.js';
 import { InteractiveOptionsInspector } from './InteractiveOptionsInspector.js';
 
 interface FlowNodeInspectorProps {
@@ -148,12 +149,46 @@ export function FlowNodeInspector({
                 </label>
                 <input
                   id="msg-media"
-                  type="url"
-                  placeholder="https://..."
+                  type="text"
+                  placeholder="https://cdn.midominio.com/imagen.png o {{archivo}}"
                   value={String(selectedNode.data.mediaUrl ?? '')}
                   onChange={(e) => onUpdateData('mediaUrl', e.target.value)}
                   className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
                 />
+                {typeof selectedNode.data.mediaUrl === 'string' &&
+                selectedNode.data.mediaUrl.trim().length > 0 ? (
+                  <div className="mt-2 rounded-xl border border-soft-line bg-soft-bg p-2">
+                    {/^https?:\/\/.+/i.test(selectedNode.data.mediaUrl.trim()) ? (
+                      <>
+                        {/\.(pdf|doc|docx|xls|xlsx|ppt|pptx|csv|txt|zip|mp3|ogg|wav|m4a|mp4|mov)(\?|$)/i.test(
+                          selectedNode.data.mediaUrl.trim()
+                        ) ? (
+                          <a
+                            href={selectedNode.data.mediaUrl.trim()}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block truncate text-[11px] font-bold text-soft-blue underline"
+                          >
+                            📎 Multimedia configurada: {selectedNode.data.mediaUrl.trim()}
+                          </a>
+                        ) : (
+                          <img
+                            src={selectedNode.data.mediaUrl.trim()}
+                            alt="Vista previa multimedia"
+                            className="max-h-28 w-full rounded-lg object-cover"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-[11px] font-semibold text-soft-muted">
+                        Se enviará adjunto dinámico si resuelve a URL `http(s)://...` válida.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
               </div>
             </>
           ) : null}
@@ -293,8 +328,10 @@ export function FlowNodeInspector({
                 >
                   <option value="CONTAINS">Contiene</option>
                   <option value="EQUALS">Es igual a</option>
+                  <option value="NOT_EQUALS">No es igual a</option>
                   <option value="NOT_EMPTY">No está vacío</option>
                   <option value="GREATER_THAN">Mayor que</option>
+                  <option value="LESS_THAN">Menor que</option>
                   <option value="REGEX">Coincide Regex</option>
                 </select>
               </div>
@@ -308,9 +345,15 @@ export function FlowNodeInspector({
                 <input
                   id="cond-val"
                   type="text"
+                  disabled={String(selectedNode.data.operator ?? 'CONTAINS') === 'NOT_EMPTY'}
+                  placeholder={
+                    String(selectedNode.data.operator ?? 'CONTAINS') === 'NOT_EMPTY'
+                      ? 'No requerido para "No está vacío"'
+                      : 'Valor o expresión...'
+                  }
                   value={String(selectedNode.data.compareValue ?? '')}
                   onChange={(e) => onUpdateData('compareValue', e.target.value)}
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink disabled:opacity-60"
                 />
               </div>
               <InteractiveOptionsInspector
@@ -324,289 +367,17 @@ export function FlowNodeInspector({
             </>
           ) : null}
 
-          {selectedNodeType === 'HTTP_REQUEST' ? (
-            <>
-              <div>
-                <label
-                  htmlFor="http-method"
-                  className="mb-1 block text-xs font-bold text-soft-ink"
-                >
-                  Método HTTP
-                </label>
-                <select
-                  id="http-method"
-                  value={String(selectedNode.data.method ?? 'GET')}
-                  onChange={(e) => onUpdateData('method', e.target.value)}
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-                >
-                  <option value="GET">GET</option>
-                  <option value="POST">POST</option>
-                  <option value="PUT">PUT</option>
-                  <option value="PATCH">PATCH</option>
-                </select>
-              </div>
-              <div>
-                <label
-                  htmlFor="http-url"
-                  className="mb-1 block text-xs font-bold text-soft-ink"
-                >
-                  Endpoint URL (Soporta {'{{cedula}}'})
-                </label>
-                <input
-                  id="http-url"
-                  type="text"
-                  value={String(selectedNode.data.url ?? '')}
-                  onChange={(e) => onUpdateData('url', e.target.value)}
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="http-var"
-                  className="mb-1 block text-xs font-bold text-soft-ink"
-                >
-                  Guardar Respuesta en Variable
-                </label>
-                <input
-                  id="http-var"
-                  type="text"
-                  value={String(
-                    selectedNode.data.responseVariable ?? 'estado_pedido'
-                  )}
-                  onChange={(e) =>
-                    onUpdateData('responseVariable', e.target.value)
-                  }
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-                />
-              </div>
-            </>
-          ) : null}
-
-          {selectedNodeType === 'AI_PROMPT' ? (
-            <>
-              <div>
-                <label
-                  htmlFor="ai-prompt"
-                  className="mb-1 block text-xs font-bold text-soft-ink"
-                >
-                  System Prompt del Agente IA
-                </label>
-                <textarea
-                  id="ai-prompt"
-                  rows={4}
-                  value={String(selectedNode.data.systemPrompt ?? '')}
-                  onChange={(e) => onUpdateData('systemPrompt', e.target.value)}
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="ai-model"
-                  className="mb-1 block text-xs font-bold text-soft-ink"
-                >
-                  Modelo LLM
-                </label>
-                <select
-                  id="ai-model"
-                  value={String(selectedNode.data.model ?? 'gpt-4o-mini')}
-                  onChange={(e) => onUpdateData('model', e.target.value)}
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-                >
-                  <option value="gpt-4o-mini">OpenAI GPT-4o Mini</option>
-                  <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
-                  <option value="gemini-2.5-flash">Google Gemini 2.5 Flash</option>
-                </select>
-              </div>
-              <div>
-                <label
-                  htmlFor="ai-fallback"
-                  className="mb-1 block text-xs font-bold text-soft-ink"
-                >
-                  Mensaje Alterno si Falla la API IA (Opcional)
-                </label>
-                <input
-                  id="ai-fallback"
-                  type="text"
-                  value={String(selectedNode.data.fallbackMessage ?? '')}
-                  onChange={(e) => onUpdateData('fallbackMessage', e.target.value)}
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-                />
-              </div>
-            </>
-          ) : null}
-
-          {selectedNodeType === 'ASSIGN_TAG' ? (
-            <div className="flex flex-col gap-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1 text-xs font-bold text-soft-ink">
-                  <Tag className="h-3.5 w-3.5 text-soft-blue" />
-                  <span>Etiquetas de Chatwoot</span>
-                </span>
-                {hasLinkedChatwootBot && onRefreshChatwootLabels ? (
-                  <button
-                    type="button"
-                    disabled={isLoadingChatwootLabels}
-                    onClick={onRefreshChatwootLabels}
-                    className="inline-flex items-center gap-1 rounded-lg border border-soft-line bg-soft-bg px-2 py-1 text-[11px] font-bold text-soft-blue hover:border-soft-blue disabled:opacity-60"
-                  >
-                    <RefreshCw
-                      className={`h-3 w-3 ${isLoadingChatwootLabels ? 'animate-spin' : ''}`}
-                    />
-                    <span>Jalar de Chatwoot</span>
-                  </button>
-                ) : null}
-              </div>
-
-              {chatwootLabelsError ? (
-                <div className="rounded-xl border border-soft-warn/40 bg-soft-warn/10 p-2.5 text-[11px] font-semibold text-soft-ink">
-                  {chatwootLabelsError}
-                </div>
-              ) : null}
-
-              {chatwootLabels.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5 rounded-xl border border-soft-line bg-soft-bg p-2.5">
-                  {chatwootLabels.map((cwLabel) => {
-                    const currentTags = Array.isArray(selectedNode.data.tags)
-                      ? (selectedNode.data.tags as string[])
-                      : [];
-                    const isSelected = currentTags.includes(cwLabel.title);
-
-                    return (
-                      <button
-                        key={cwLabel.id}
-                        type="button"
-                        onClick={() => {
-                          const nextTags = isSelected
-                            ? currentTags.filter((t) => t !== cwLabel.title)
-                            : [...currentTags, cwLabel.title];
-                          onUpdateData('tags', nextTags);
-                        }}
-                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold transition-all ${
-                          isSelected
-                            ? 'border-soft-blue bg-soft-blue text-white shadow-sm'
-                            : 'border-soft-line bg-soft-card text-soft-ink hover:border-soft-blue'
-                        }`}
-                      >
-                        <span
-                          className="h-2 w-2 rounded-full"
-                          style={{ backgroundColor: cwLabel.color || '#2152FF' }}
-                        />
-                        <span>{cwLabel.title}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : hasLinkedChatwootBot && !isLoadingChatwootLabels && !chatwootLabelsError ? (
-                <p className="text-[11px] text-soft-muted">
-                  No se encontraron etiquetas en la cuenta de Chatwoot o aún no se han creado allá.
-                </p>
-              ) : null}
-
-              <div>
-                <label
-                  htmlFor="assign-tags-input"
-                  className="mb-1 block text-xs font-bold text-soft-ink"
-                >
-                  Etiquetas seleccionadas (separadas por coma)
-                </label>
-                <input
-                  id="assign-tags-input"
-                  type="text"
-                  value={
-                    Array.isArray(selectedNode.data.tags)
-                      ? (selectedNode.data.tags as string[]).join(', ')
-                      : ''
-                  }
-                  onChange={(e) =>
-                    onUpdateData(
-                      'tags',
-                      e.target.value
-                        .split(',')
-                        .map((t) => t.trim())
-                        .filter(Boolean)
-                    )
-                  }
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {selectedNodeType === 'DELAY' ? (
-            <div>
-              <label
-                htmlFor="delay-seconds-input"
-                className="mb-1 block text-xs font-bold text-soft-ink"
-              >
-                Segundos de Espera / Escribiendo (0 - 15s)
-              </label>
-              <input
-                id="delay-seconds-input"
-                type="number"
-                min={0}
-                max={15}
-                value={Number(selectedNode.data.delaySeconds ?? 2)}
-                onChange={(e) =>
-                  onUpdateData('delaySeconds', Number(e.target.value) || 0)
-                }
-                className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-              />
-            </div>
-          ) : null}
-
-          {selectedNodeType === 'HANDOFF' ? (
-            <>
-              <div>
-                <label
-                  htmlFor="ho-msg"
-                  className="mb-1 block text-xs font-bold text-soft-ink"
-                >
-                  Mensaje al Cliente Antes de Transferir
-                </label>
-                <textarea
-                  id="ho-msg"
-                  rows={2}
-                  value={String(selectedNode.data.clientMessage ?? '')}
-                  onChange={(e) => onUpdateData('clientMessage', e.target.value)}
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="ho-note"
-                  className="mb-1 block text-xs font-bold text-soft-ink"
-                >
-                  Nota Privada de Resumen en Chatwoot
-                </label>
-                <textarea
-                  id="ho-note"
-                  rows={3}
-                  value={String(selectedNode.data.privateNoteTemplate ?? '')}
-                  onChange={(e) =>
-                    onUpdateData('privateNoteTemplate', e.target.value)
-                  }
-                  className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-                />
-              </div>
-            </>
-          ) : null}
-
-          {selectedNodeType === 'END' ? (
-            <div>
-              <label
-                htmlFor="end-farewell-input"
-                className="mb-1 block text-xs font-bold text-soft-ink"
-              >
-                Mensaje de Despedida
-              </label>
-              <textarea
-                id="end-farewell-input"
-                rows={3}
-                value={String(selectedNode.data.farewellMessage ?? '')}
-                onChange={(e) => onUpdateData('farewellMessage', e.target.value)}
-                className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
-              />
-            </div>
+          {selectedNodeType ? (
+            <FlowActionNodesInspector
+              selectedNode={selectedNode}
+              nodeType={selectedNodeType}
+              chatwootLabels={chatwootLabels}
+              isLoadingChatwootLabels={isLoadingChatwootLabels}
+              chatwootLabelsError={chatwootLabelsError}
+              hasLinkedChatwootBot={hasLinkedChatwootBot}
+              onRefreshChatwootLabels={onRefreshChatwootLabels}
+              onUpdateData={onUpdateData}
+            />
           ) : null}
         </div>
       ) : (

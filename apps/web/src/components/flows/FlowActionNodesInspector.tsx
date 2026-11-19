@@ -1,0 +1,393 @@
+import { useEffect, useState } from 'react';
+import { Node } from '@xyflow/react';
+import { RefreshCw, Tag } from 'lucide-react';
+import { ChatwootLabelDto, FlowNodeType } from '@bothub/shared';
+
+interface FlowActionNodesInspectorProps {
+  selectedNode: Node;
+  nodeType: FlowNodeType;
+  chatwootLabels: ChatwootLabelDto[];
+  isLoadingChatwootLabels: boolean;
+  chatwootLabelsError: string | null;
+  hasLinkedChatwootBot: boolean;
+  onRefreshChatwootLabels?: () => void;
+  onUpdateData: (key: string, value: unknown) => void;
+}
+
+export function FlowActionNodesInspector({
+  selectedNode,
+  nodeType,
+  chatwootLabels,
+  isLoadingChatwootLabels,
+  chatwootLabelsError,
+  hasLinkedChatwootBot,
+  onRefreshChatwootLabels,
+  onUpdateData
+}: FlowActionNodesInspectorProps) {
+  const [tagInputText, setTagInputText] = useState('');
+  const [headersInputText, setHeadersInputText] = useState('');
+  const [headersJsonError, setHeadersJsonError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const rawTags = Array.isArray(selectedNode.data.tags)
+      ? (selectedNode.data.tags as string[])
+      : [];
+    setTagInputText(rawTags.join(', '));
+    const rawHeaders = selectedNode.data.headers;
+    if (rawHeaders && typeof rawHeaders === 'object' && Object.keys(rawHeaders).length > 0) {
+      setHeadersInputText(JSON.stringify(rawHeaders, null, 2));
+    } else {
+      setHeadersInputText('');
+    }
+    setHeadersJsonError(null);
+  }, [selectedNode.id]);
+
+  if (nodeType === 'HTTP_REQUEST') {
+    return (
+      <>
+        <div>
+          <label htmlFor="http-method" className="mb-1 block text-xs font-bold text-soft-ink">
+            Método HTTP
+          </label>
+          <select
+            id="http-method"
+            value={String(selectedNode.data.method ?? 'GET')}
+            onChange={(e) => onUpdateData('method', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          >
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor="http-url" className="mb-1 block text-xs font-bold text-soft-ink">
+            Endpoint URL (Soporta {'{{cedula}}'})
+          </label>
+          <input
+            id="http-url"
+            type="text"
+            value={String(selectedNode.data.url ?? '')}
+            onChange={(e) => onUpdateData('url', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+        <div>
+          <label htmlFor="http-var" className="mb-1 block text-xs font-bold text-soft-ink">
+            Guardar Respuesta en Variable
+          </label>
+          <input
+            id="http-var"
+            type="text"
+            value={String(selectedNode.data.responseVariable ?? 'estado_pedido')}
+            onChange={(e) => onUpdateData('responseVariable', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+        <div>
+          <label htmlFor="http-path" className="mb-1 block text-xs font-bold text-soft-ink">
+            Ruta JSON a Extraer (Opcional, ej: data.status)
+          </label>
+          <input
+            id="http-path"
+            type="text"
+            placeholder="data.status"
+            value={String(selectedNode.data.responsePath ?? '')}
+            onChange={(e) => onUpdateData('responsePath', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+        {String(selectedNode.data.method ?? 'GET') !== 'GET' ? (
+          <div>
+            <label htmlFor="http-body" className="mb-1 block text-xs font-bold text-soft-ink">
+              Cuerpo JSON (Body Template)
+            </label>
+            <textarea
+              id="http-body"
+              rows={3}
+              placeholder={'{"documento":"{{cedula}}"}'}
+              value={String(selectedNode.data.bodyTemplate ?? '')}
+              onChange={(e) => onUpdateData('bodyTemplate', e.target.value)}
+              className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 font-mono text-[11px] text-soft-ink"
+            />
+          </div>
+        ) : null}
+        <div>
+          <label htmlFor="http-headers" className="mb-1 block text-xs font-bold text-soft-ink">
+            Headers JSON (Opcional)
+          </label>
+          <textarea
+            id="http-headers"
+            rows={2}
+            placeholder={'{"Authorization":"Bearer ..."}'}
+            value={headersInputText}
+            onChange={(e) => {
+              const nextText = e.target.value;
+              setHeadersInputText(nextText);
+              if (!nextText.trim()) {
+                setHeadersJsonError(null);
+                onUpdateData('headers', undefined);
+                return;
+              }
+              try {
+                const parsed = JSON.parse(nextText) as Record<string, unknown>;
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                  setHeadersJsonError(null);
+                  onUpdateData('headers', parsed);
+                } else {
+                  setHeadersJsonError('Debe ser un objeto JSON clave/valor.');
+                }
+              } catch {
+                setHeadersJsonError('JSON de headers inválido.');
+              }
+            }}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 font-mono text-[11px] text-soft-ink"
+          />
+          {headersJsonError ? (
+            <p className="mt-1 text-[10px] font-bold text-soft-danger">{headersJsonError}</p>
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  if (nodeType === 'AI_PROMPT') {
+    return (
+      <>
+        <div>
+          <label htmlFor="ai-prompt" className="mb-1 block text-xs font-bold text-soft-ink">
+            System Prompt del Agente IA
+          </label>
+          <textarea
+            id="ai-prompt"
+            rows={4}
+            value={String(selectedNode.data.systemPrompt ?? '')}
+            onChange={(e) => onUpdateData('systemPrompt', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+        <div>
+          <label htmlFor="ai-model" className="mb-1 block text-xs font-bold text-soft-ink">
+            Modelo LLM
+          </label>
+          <select
+            id="ai-model"
+            value={String(selectedNode.data.model ?? 'gpt-4o-mini')}
+            onChange={(e) => onUpdateData('model', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          >
+            <option value="gpt-4o-mini">OpenAI GPT-4o Mini</option>
+            <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
+            <option value="gemini-2.5-flash">Google Gemini 2.5 Flash</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor="ai-save-var" className="mb-1 block text-xs font-bold text-soft-ink">
+            Guardar Respuesta en Variable
+          </label>
+          <input
+            id="ai-save-var"
+            type="text"
+            value={String(selectedNode.data.saveToVariable ?? 'respuesta_ia')}
+            onChange={(e) => onUpdateData('saveToVariable', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+        <div>
+          <label htmlFor="ai-fallback" className="mb-1 block text-xs font-bold text-soft-ink">
+            Mensaje Alterno si Falla la API IA (Opcional)
+          </label>
+          <input
+            id="ai-fallback"
+            type="text"
+            value={String(selectedNode.data.fallbackMessage ?? '')}
+            onChange={(e) => onUpdateData('fallbackMessage', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+      </>
+    );
+  }
+
+  if (nodeType === 'ASSIGN_TAG') {
+    return (
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1 text-xs font-bold text-soft-ink">
+            <Tag className="h-3.5 w-3.5 text-soft-blue" />
+            <span>Etiquetas de Chatwoot</span>
+          </span>
+          {hasLinkedChatwootBot && onRefreshChatwootLabels ? (
+            <button
+              type="button"
+              disabled={isLoadingChatwootLabels}
+              onClick={onRefreshChatwootLabels}
+              className="inline-flex items-center gap-1 rounded-lg border border-soft-line bg-soft-bg px-2 py-1 text-[11px] font-bold text-soft-blue hover:border-soft-blue disabled:opacity-60"
+            >
+              <RefreshCw
+                className={`h-3 w-3 ${isLoadingChatwootLabels ? 'animate-spin' : ''}`}
+              />
+              <span>Jalar de Chatwoot</span>
+            </button>
+          ) : null}
+        </div>
+
+        {chatwootLabelsError ? (
+          <div className="rounded-xl border border-soft-warning/40 bg-soft-warning/10 p-2.5 text-[11px] font-semibold text-soft-ink">
+            {chatwootLabelsError}
+          </div>
+        ) : null}
+
+        {chatwootLabels.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5 rounded-xl border border-soft-line bg-soft-bg p-2.5">
+            {chatwootLabels.map((cwLabel) => {
+              const currentTags = Array.isArray(selectedNode.data.tags)
+                ? (selectedNode.data.tags as string[])
+                : [];
+              const isSelected = currentTags.includes(cwLabel.title);
+
+              return (
+                <button
+                  key={cwLabel.id}
+                  type="button"
+                  onClick={() => {
+                    const nextTags = isSelected
+                      ? currentTags.filter((t) => t !== cwLabel.title)
+                      : [...currentTags, cwLabel.title];
+                    setTagInputText(nextTags.join(', '));
+                    onUpdateData('tags', nextTags);
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold transition-all ${
+                    isSelected
+                      ? 'border-soft-blue bg-soft-blue text-white shadow-sm'
+                      : 'border-soft-line bg-soft-card text-soft-ink hover:border-soft-blue'
+                  }`}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: cwLabel.color || '#2152FF' }}
+                  />
+                  <span>{cwLabel.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : hasLinkedChatwootBot && !isLoadingChatwootLabels && !chatwootLabelsError ? (
+          <p className="text-[11px] text-soft-muted">
+            No se encontraron etiquetas en la cuenta de Chatwoot o aún no se han creado allá.
+          </p>
+        ) : null}
+
+        <div>
+          <label htmlFor="assign-tags-input" className="mb-1 block text-xs font-bold text-soft-ink">
+            Etiquetas seleccionadas (separadas por coma)
+          </label>
+          <input
+            id="assign-tags-input"
+            type="text"
+            value={tagInputText}
+            onChange={(e) => {
+              const nextVal = e.target.value;
+              setTagInputText(nextVal);
+              onUpdateData(
+                'tags',
+                nextVal
+                  .split(',')
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              );
+            }}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (nodeType === 'DELAY') {
+    return (
+      <div>
+        <label htmlFor="delay-seconds-input" className="mb-1 block text-xs font-bold text-soft-ink">
+          Segundos de Espera / Escribiendo (0 - 15s)
+        </label>
+        <input
+          id="delay-seconds-input"
+          type="number"
+          min={0}
+          max={15}
+          value={Number(selectedNode.data.delaySeconds ?? 2)}
+          onChange={(e) => {
+            const raw = Number(e.target.value);
+            const clamped = Number.isFinite(raw) ? Math.max(0, Math.min(15, raw)) : 0;
+            onUpdateData('delaySeconds', clamped);
+          }}
+          className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+        />
+      </div>
+    );
+  }
+
+  if (nodeType === 'HANDOFF') {
+    return (
+      <>
+        <div>
+          <label htmlFor="ho-team" className="mb-1 block text-xs font-bold text-soft-ink">
+            Equipo / Área Destino
+          </label>
+          <input
+            id="ho-team"
+            type="text"
+            placeholder="Ventas & Soporte"
+            value={String(selectedNode.data.teamName ?? '')}
+            onChange={(e) => onUpdateData('teamName', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+        <div>
+          <label htmlFor="ho-msg" className="mb-1 block text-xs font-bold text-soft-ink">
+            Mensaje al Cliente Antes de Transferir
+          </label>
+          <textarea
+            id="ho-msg"
+            rows={2}
+            value={String(selectedNode.data.clientMessage ?? '')}
+            onChange={(e) => onUpdateData('clientMessage', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+        <div>
+          <label htmlFor="ho-note" className="mb-1 block text-xs font-bold text-soft-ink">
+            Nota Privada de Resumen en Chatwoot
+          </label>
+          <textarea
+            id="ho-note"
+            rows={3}
+            value={String(selectedNode.data.privateNoteTemplate ?? '')}
+            onChange={(e) => onUpdateData('privateNoteTemplate', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+      </>
+    );
+  }
+
+  if (nodeType === 'END') {
+    return (
+      <div>
+        <label htmlFor="end-farewell-input" className="mb-1 block text-xs font-bold text-soft-ink">
+          Mensaje de Despedida
+        </label>
+        <textarea
+          id="end-farewell-input"
+          rows={3}
+          value={String(selectedNode.data.farewellMessage ?? '')}
+          onChange={(e) => onUpdateData('farewellMessage', e.target.value)}
+          className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+        />
+      </div>
+    );
+  }
+
+  return null;
+}

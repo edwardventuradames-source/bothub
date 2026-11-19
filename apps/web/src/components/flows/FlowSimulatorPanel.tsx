@@ -10,6 +10,8 @@ interface ChatBubble {
   id: string;
   sender: 'user' | 'bot';
   text: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'audio' | 'document';
   buttons?: Array<{ id: string; label: string }>;
   listItems?: Array<{ id: string; title: string; description?: string }>;
   timestamp: string;
@@ -85,6 +87,8 @@ export function FlowSimulatorPanel({
           id: reply.id,
           sender: 'bot',
           text: reply.text,
+          mediaUrl: reply.mediaUrl,
+          mediaType: reply.mediaType,
           buttons: reply.buttons,
           listItems: reply.listItems,
           timestamp: new Date().toLocaleTimeString([], {
@@ -211,7 +215,43 @@ export function FlowSimulatorPanel({
                     : 'border border-soft-line bg-soft-card text-soft-ink'
                 }`}
               >
-                <p className="whitespace-pre-wrap">{msg.text}</p>
+                {msg.text ? <p className="whitespace-pre-wrap">{msg.text}</p> : null}
+
+                {msg.mediaUrl ? (
+                  <div className="mt-2 overflow-hidden rounded-xl border border-soft-line bg-soft-bg p-1.5">
+                    {msg.mediaType === 'audio' ? (
+                      <audio controls src={msg.mediaUrl} className="w-full" />
+                    ) : msg.mediaType === 'document' ? (
+                      <a
+                        href={msg.mediaUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-2 py-1 text-[11px] font-bold text-soft-blue underline break-all"
+                      >
+                        📎 {msg.mediaUrl}
+                      </a>
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        <img
+                          src={msg.mediaUrl}
+                          alt="Vista previa multimedia del nodo"
+                          className="max-h-36 w-full rounded-lg object-cover"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                        <a
+                          href={msg.mediaUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="truncate px-1 text-[10px] font-semibold text-soft-blue underline"
+                        >
+                          {msg.mediaUrl}
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
 
                 {msg.buttons && msg.buttons.length > 0 ? (
                   <div className="mt-2 flex flex-col gap-1.5">
