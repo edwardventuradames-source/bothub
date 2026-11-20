@@ -452,8 +452,12 @@ export function FlowActionNodesInspector({
             <option value="gpt-4o-mini">OpenAI GPT-4o Mini</option>
             <option value="gpt-4o">OpenAI GPT-4o</option>
             <option value="gpt-4.1-mini">OpenAI GPT-4.1 Mini</option>
-            <option value="gemini-3.8-flash">Google Gemini 3.8 Flash</option>
-            <option value="gemini-3.1-pro-preview">Google Gemini 3.1 Pro</option>
+            <option value="gemini-3.8-flash">
+              Google Gemini 3.8 Flash (Recomendado / Plan Gratuito)
+            </option>
+            <option value="gemini-3.1-pro-preview">
+              Google Gemini 3.1 Pro (Requiere Billing en AI Studio)
+            </option>
             <option value="claude-sonnet-4-20250514">Anthropic Claude Sonnet 4</option>
             <option value="claude-3-5-haiku-latest">Anthropic Claude 3.5 Haiku</option>
             {selectedModel === 'claude-3-5-sonnet-latest' ? (

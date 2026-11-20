@@ -499,7 +499,11 @@ async function extractAiHttpErrorMessage(
     const parsed = JSON.parse(raw) as { error?: { message?: string }; message?: string };
     const upstreamMsg = parsed.error?.message || parsed.message;
     if (typeof upstreamMsg === 'string' && upstreamMsg.trim().length > 0) {
-      return `${providerLabel} HTTP ${response.status}: ${upstreamMsg.trim().slice(0, 260)}`;
+      const hint =
+        response.status === 429 && providerLabel === 'Gemini'
+          ? ' (Tip: los modelos Pro suelen tener cuota 0 en plan gratuito; usa gemini-3.8-flash o habilita billing en AI Studio).'
+          : '';
+      return `${providerLabel} HTTP ${response.status}: ${upstreamMsg.trim().slice(0, 420)}${hint}`;
     }
   } catch {
     void 0;
