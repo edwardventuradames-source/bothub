@@ -20,6 +20,10 @@ const AI_HTTP_TIMEOUT_MS = 20000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 512;
 const MIN_OUTPUT_TOKENS = 64;
 const MAX_OUTPUT_TOKENS = 4096;
+const LEGACY_MODEL_ALIASES: Record<string, string> = {
+  'gemini-2.5-flash': 'gemini-3.8-flash',
+  'gemini-2.5-pro': 'gemini-3.1-pro-preview'
+};
 const MAX_RESPONSE_PREVIEW_CHARS = 1200;
 const MAX_RESPONSE_LOG_CHARS = 4000;
 const MAX_RESPONSE_BYTES = 262144;
@@ -495,7 +499,7 @@ async function extractAiHttpErrorMessage(
     const parsed = JSON.parse(raw) as { error?: { message?: string }; message?: string };
     const upstreamMsg = parsed.error?.message || parsed.message;
     if (typeof upstreamMsg === 'string' && upstreamMsg.trim().length > 0) {
-      return `${providerLabel} HTTP ${response.status}: ${upstreamMsg.trim().slice(0, 180)}`;
+      return `${providerLabel} HTTP ${response.status}: ${upstreamMsg.trim().slice(0, 260)}`;
     }
   } catch {
     void 0;
@@ -563,7 +567,8 @@ export async function executeAiPromptNode(
   usage: AiTokenUsageDto | null;
 }> {
   const startedAt = Date.now();
-  const model = String(node.data.model ?? 'gpt-4o-mini').trim() || 'gpt-4o-mini';
+  const rawModel = String(node.data.model ?? 'gpt-4o-mini').trim() || 'gpt-4o-mini';
+  const model = LEGACY_MODEL_ALIASES[rawModel] ?? rawModel;
   const provider = resolveAiProviderFromModel(model);
   const maxTokens = resolveMaxOutputTokens(node.data.maxTokens);
   const rawSystemPrompt = String(

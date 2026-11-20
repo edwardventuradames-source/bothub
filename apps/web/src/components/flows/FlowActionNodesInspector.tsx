@@ -365,7 +365,13 @@ export function FlowActionNodesInspector({
   }
 
   if (nodeType === 'AI_PROMPT') {
-    const selectedModel = String(selectedNode.data.model ?? 'gpt-4o-mini');
+    const rawSelectedModel = String(selectedNode.data.model ?? 'gpt-4o-mini');
+    const selectedModel =
+      rawSelectedModel === 'gemini-2.5-flash'
+        ? 'gemini-3.8-flash'
+        : rawSelectedModel === 'gemini-2.5-pro'
+          ? 'gemini-3.1-pro-preview'
+          : rawSelectedModel;
     const selectedProviderId: AiProviderId = selectedModel.toLowerCase().startsWith('claude')
       ? 'anthropic'
       : selectedModel.toLowerCase().startsWith('gemini')
@@ -446,8 +452,8 @@ export function FlowActionNodesInspector({
             <option value="gpt-4o-mini">OpenAI GPT-4o Mini</option>
             <option value="gpt-4o">OpenAI GPT-4o</option>
             <option value="gpt-4.1-mini">OpenAI GPT-4.1 Mini</option>
-            <option value="gemini-2.5-flash">Google Gemini 2.5 Flash</option>
-            <option value="gemini-2.5-pro">Google Gemini 2.5 Pro</option>
+            <option value="gemini-3.8-flash">Google Gemini 3.8 Flash</option>
+            <option value="gemini-3.1-pro-preview">Google Gemini 3.1 Pro</option>
             <option value="claude-sonnet-4-20250514">Anthropic Claude Sonnet 4</option>
             <option value="claude-3-5-haiku-latest">Anthropic Claude 3.5 Haiku</option>
             {selectedModel === 'claude-3-5-sonnet-latest' ? (

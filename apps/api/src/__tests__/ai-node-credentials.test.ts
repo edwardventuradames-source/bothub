@@ -106,6 +106,7 @@ describe('AI Provider Credentials & AI_PROMPT Node Testing', () => {
         }
         if (urlStr.includes('generativelanguage.googleapis.com')) {
           expect(headers['x-goog-api-key']).toBe('AIzaSyTestGeminiOrgA12345');
+          expect(urlStr).toContain('gemini-3.8-flash:generateContent');
           return new Response(
             JSON.stringify({
               error: { message: 'API key expired. Please renew.' }
