@@ -13,7 +13,8 @@ import {
   isWithinBotBusinessHours,
   matchBotQuickReply,
   resolveInterReplyWaitMs,
-  waitOutgoingPacingMs
+  waitOutgoingPacingMs,
+  withContactTurnLock
 } from '../../lib/bot-runtime-utils.js';
 import { runtimeStore } from '../../lib/runtime-store.js';
 import { syncConversationStateToDb } from '../../lib/persistence.js';
@@ -93,7 +94,11 @@ async function mirrorReplyToChatwootIfConfigured(
   bot: BotDto,
   conversation: ConversationDto,
   content: string,
-  options: { isPrivate?: boolean; messageType?: 'incoming' | 'outgoing' } = {}
+  options: {
+    isPrivate?: boolean;
+    messageType?: 'incoming' | 'outgoing';
+    reply?: FlowSimulationBotReply;
+  } = {}
 ): Promise<void> {
   const cwConfig = runtimeStore.getChatwootConfigDto(bot.id);
   const cwSecrets = runtimeStore.getDecryptedChatwootTokens(bot.id);
@@ -107,6 +112,7 @@ async function mirrorReplyToChatwootIfConfigured(
       apiAccessToken: cwSecrets.apiAccessToken,
       conversationId: conversation.chatwootConversationId,
       content,
+      reply: options.reply,
       isPrivate: options.isPrivate,
       messageType: options.messageType
     });
@@ -158,6 +164,7 @@ export async function processInboundWhatsAppMessage(
     return { accepted: true, action: 'rate_limited' };
   }
 
+  return withContactTurnLock(`wa:${bot.id}:${params.fromPhone}`, async () => {
   let contact = runtimeStore.contacts.find(
     (item) =>
       item.organizationId === bot.organizationId &&
@@ -482,7 +489,7 @@ export async function processInboundWhatsAppMessage(
       params.io
     );
     const formatted = formatBotReplyForChatwoot(reply);
-    await mirrorReplyToChatwootIfConfigured(bot, conversation, formatted);
+    await mirrorReplyToChatwootIfConfigured(bot, conversation, formatted, { reply });
 
     conversation.messages.push({
       id: reply.id,
@@ -557,4 +564,5 @@ export async function processInboundWhatsAppMessage(
     conversation,
     simulation
   };
+  });
 }

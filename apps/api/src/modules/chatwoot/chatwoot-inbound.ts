@@ -11,7 +11,8 @@ import {
   isWithinBotBusinessHours,
   matchBotQuickReply,
   resolveInterReplyWaitMs,
-  waitOutgoingPacingMs
+  waitOutgoingPacingMs,
+  withContactTurnLock
 } from '../../lib/bot-runtime-utils.js';
 import { runtimeStore } from '../../lib/runtime-store.js';
 import { syncConversationStateToDb } from '../../lib/persistence.js';
@@ -131,6 +132,7 @@ export async function processIncomingChatwootCustomerMessage(
     return { accepted: true, action: 'rate_limited' };
   }
 
+  return withContactTurnLock(`cw:${bot.id}:${chatwootConvId}`, async () => {
   let contact = runtimeStore.contacts.find(
     (item) =>
       item.organizationId === bot.organizationId &&
@@ -507,4 +509,5 @@ export async function processIncomingChatwootCustomerMessage(
     action: 'bot_flow_replied',
     conversation
   };
+  });
 }

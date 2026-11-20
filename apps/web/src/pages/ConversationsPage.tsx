@@ -419,7 +419,7 @@ export function ConversationsPage() {
                         <p className="whitespace-pre-wrap leading-relaxed">
                           {msg.content}
                         </p>
-                        {msg.mediaUrl ? (
+                        {msg.mediaUrl && /^https?:\/\/.+/i.test(msg.mediaUrl) ? (
                           <a
                             href={msg.mediaUrl}
                             target="_blank"

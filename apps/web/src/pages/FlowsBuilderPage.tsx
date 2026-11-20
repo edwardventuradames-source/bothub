@@ -197,6 +197,20 @@ export function FlowsBuilderPage() {
   }, []);
 
   useEffect(() => {
+    if (!hasUnsavedChanges) {
+      return;
+    }
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
     if (!routeFlowId) {
       loadedFlowIdRef.current = null;
       return;

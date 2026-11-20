@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FlowEdge, FlowNode } from '@bothub/shared';
-import { resolveInterReplyWaitMs } from '../lib/bot-runtime-utils.js';
+import {
+  resolveInterReplyWaitMs,
+  withContactTurnLock
+} from '../lib/bot-runtime-utils.js';
 import { runtimeStore } from '../lib/runtime-store.js';
 import { executeFlowSimulationStep } from '../modules/flows/flow.engine.js';
 import { ChatwootService } from '../modules/chatwoot/chatwoot.service.js';
@@ -231,5 +234,24 @@ describe('Chatwoot Reply Ordering and Media Pacing', () => {
       vi.useRealTimers();
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('serializes concurrent turns for the same contact via withContactTurnLock', async () => {
+    const sequence: string[] = [];
+    const first = withContactTurnLock('cw:bot-1:conv-99', async () => {
+      sequence.push('start-1');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      sequence.push('end-1');
+      return 1;
+    });
+    const second = withContactTurnLock('cw:bot-1:conv-99', async () => {
+      sequence.push('start-2');
+      sequence.push('end-2');
+      return 2;
+    });
+
+    const results = await Promise.all([first, second]);
+    expect(results).toEqual([1, 2]);
+    expect(sequence).toEqual(['start-1', 'end-1', 'start-2', 'end-2']);
   });
 });

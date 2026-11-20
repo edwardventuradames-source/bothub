@@ -11,6 +11,7 @@ const DIRECT_TEXT_PACING_MS = 350;
 
 const processedMessageIds = new Map<string, number>();
 const inboundRateCounters = new Map<string, { count: number; windowStart: number }>();
+const contactTurnLocks = new Map<string, Promise<void>>();
 
 const WEEKDAY_MAP: Record<string, number> = {
   Sun: 0,
@@ -50,6 +51,13 @@ export function isBotContactRateLimited(
   const safeLimit = Math.max(1, limitPerMinute || 30);
   const key = `${botId}:${contactPhone}`;
   const now = Date.now();
+  if (inboundRateCounters.size > DEDUP_MAX_ENTRIES) {
+    for (const [entryKey, entryVal] of inboundRateCounters.entries()) {
+      if (now - entryVal.windowStart >= RATE_WINDOW_MS) {
+        inboundRateCounters.delete(entryKey);
+      }
+    }
+  }
   const current = inboundRateCounters.get(key);
   if (!current || now - current.windowStart >= RATE_WINDOW_MS) {
     inboundRateCounters.set(key, { count: 1, windowStart: now });
@@ -146,4 +154,27 @@ export async function waitOutgoingPacingMs(ms: number): Promise<void> {
     return;
   }
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function withContactTurnLock<T>(
+  lockKey: string,
+  task: () => Promise<T>
+): Promise<T> {
+  const previous = contactTurnLocks.get(lockKey) ?? Promise.resolve();
+  let releaseCurrent: () => void = () => {};
+  const currentGate = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const chained = previous.catch(() => undefined).then(() => currentGate);
+  contactTurnLocks.set(lockKey, chained);
+
+  await previous.catch(() => undefined);
+  try {
+    return await task();
+  } finally {
+    releaseCurrent();
+    if (contactTurnLocks.get(lockKey) === chained) {
+      contactTurnLocks.delete(lockKey);
+    }
+  }
 }
