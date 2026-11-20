@@ -9,6 +9,7 @@ import { FlowActionNodesInspector } from './FlowActionNodesInspector.js';
 import { InteractiveOptionsInspector } from './InteractiveOptionsInspector.js';
 
 interface FlowNodeInspectorProps {
+  flowId?: string;
   selectedNode: Node | null;
   allNodes: Node[];
   edges: Edge[];
@@ -28,6 +29,7 @@ interface FlowNodeInspectorProps {
 }
 
 export function FlowNodeInspector({
+  flowId,
   selectedNode,
   allNodes,
   edges,
@@ -369,6 +371,7 @@ export function FlowNodeInspector({
 
           {selectedNodeType ? (
             <FlowActionNodesInspector
+              flowId={flowId}
               selectedNode={selectedNode}
               nodeType={selectedNodeType}
               chatwootLabels={chatwootLabels}

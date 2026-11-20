@@ -23,6 +23,8 @@ import {
   OutboundWebhookConfigInput,
   ResetPasswordInput,
   SaveFlowGraphInput,
+  TestFlowHttpNodeInput,
+  TestFlowHttpNodeResponse,
   UpdateBotInput,
   UpdateFlowInput,
   UpdateUserInput
@@ -240,6 +242,11 @@ export const flowsApi = {
     }),
   simulateStep: (id: string, input: FlowSimulationRequest) =>
     performRequest<FlowSimulationResponse>(`/flows/${id}/simulate`, {
+      method: 'POST',
+      body: JSON.stringify(input)
+    }),
+  testHttpNode: (id: string, input: TestFlowHttpNodeInput) =>
+    performRequest<TestFlowHttpNodeResponse>(`/flows/${id}/test-http`, {
       method: 'POST',
       body: JSON.stringify(input)
     }),

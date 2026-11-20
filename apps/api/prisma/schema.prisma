@@ -154,19 +154,20 @@ model WhatsAppSession {
 }
 
 model ChatwootConfig {
-  id                      String   @id @default(uuid())
-  botId                   String   @unique
-  bot                     Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
-  baseUrl                 String
-  accountId               Int
-  inboxId                 Int
-  encryptedApiAccessToken String
-  encryptedWebhookToken   String
-  handoffReturnCommand    String   @default("#bot")
-  isConnected             Boolean  @default(false)
-  lastVerifiedAt          DateTime?
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  id                          String    @id @default(uuid())
+  botId                       String    @unique
+  bot                         Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  baseUrl                     String
+  accountId                   Int
+  inboxId                     Int
+  encryptedApiAccessToken     String
+  encryptedUserApiAccessToken String?
+  encryptedWebhookToken       String
+  handoffReturnCommand        String    @default("#bot")
+  isConnected                 Boolean   @default(false)
+  lastVerifiedAt              DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 }
 
 model Flow {

@@ -411,6 +411,12 @@ export async function executeFlowSimulationStep(
         );
         const httpResult = await executeHttpRequestNode(activeNode, variables);
 
+        if (httpResult.statusCode !== null) {
+          variables[`${responseVar}_status`] = String(httpResult.statusCode);
+        } else {
+          delete variables[`${responseVar}_status`];
+        }
+
         if (httpResult.ok) {
           variables[responseVar] = httpResult.value;
           delete variables[`${responseVar}_error`];
@@ -419,16 +425,20 @@ export async function executeFlowSimulationStep(
             nodeType: 'HTTP_REQUEST',
             title: nodeTitle,
             detail: `${httpResult.method} ${httpResult.renderedUrl} (${httpResult.statusCode}) -> {{${responseVar}}}`,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            httpDetails: httpResult.httpDetails
           });
         } else {
           variables[`${responseVar}_error`] = httpResult.errorMessage ?? 'Error HTTP';
+          const statusLabel =
+            httpResult.statusCode !== null ? ` (${httpResult.statusCode})` : '';
           trace.push({
             nodeId: activeNode.id,
             nodeType: 'HTTP_REQUEST',
             title: nodeTitle,
-            detail: `Error ${httpResult.method} ${httpResult.renderedUrl}: ${httpResult.errorMessage}`,
-            timestamp: new Date().toISOString()
+            detail: `Error ${httpResult.method} ${httpResult.renderedUrl}${statusLabel}: ${httpResult.errorMessage}`,
+            timestamp: new Date().toISOString(),
+            httpDetails: httpResult.httpDetails
           });
         }
 

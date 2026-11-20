@@ -86,10 +86,19 @@ class RuntimeStore {
   public logs: BotLogDto[] = [];
   public apiKeys: StoredApiKeyRecord[] = [];
   public outboundWebhooks: StoredOutboundWebhookRecord[] = [];
+  private logPersistenceHandler:
+    | ((organizationId: string, entry: BotLogDto) => void)
+    | null = null;
 
   constructor() {
     this.reloadUsersFromDisk();
     this.reloadStateFromDisk();
+  }
+
+  public setLogPersistenceHandler(
+    handler: (organizationId: string, entry: BotLogDto) => void
+  ): void {
+    this.logPersistenceHandler = handler;
   }
 
   public reloadStateFromDisk(): void {
@@ -430,6 +439,9 @@ class RuntimeStore {
       this.logs.pop();
     }
     this.persistStateToDisk();
+    if (!isTestRuntime() && this.logPersistenceHandler) {
+      this.logPersistenceHandler(logItem.organizationId ?? DEFAULT_ORG_ID, logItem);
+    }
     return logItem;
   }
 

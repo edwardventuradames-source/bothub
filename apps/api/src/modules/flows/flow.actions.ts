@@ -1,12 +1,19 @@
-import { FlowNode } from '@bothub/shared';
+import { FlowHttpExecutionLog, FlowNode } from '@bothub/shared';
 import {
   pinnedSafeFetch,
   resolveAndPinExternalUrl
 } from '../../lib/ssrf-guard.js';
+import {
+  resolveFlowVariableValue,
+  sanitizeVariableName
+} from './flow-evaluators.js';
 
 const ACTION_HTTP_TIMEOUT_MS = 8000;
 const MAX_RESPONSE_PREVIEW_CHARS = 1200;
+const MAX_RESPONSE_LOG_CHARS = 4000;
 const MAX_RESPONSE_BYTES = 262144;
+const HEADER_MASK_EDGE_CHARS = 4;
+const HEADER_MASK_MIN_LENGTH = 8;
 const FORBIDDEN_HEADER_NAMES = new Set([
   'host',
   'content-length',
@@ -16,105 +23,260 @@ const FORBIDDEN_HEADER_NAMES = new Set([
   'proxy-authorization',
   'te'
 ]);
+const SENSITIVE_HEADER_NAMES = new Set([
+  'authorization',
+  'proxy-authorization',
+  'x-api-key',
+  'api-key',
+  'x-auth-token',
+  'cookie',
+  'set-cookie'
+]);
+
+type JsonPathSegment =
+  | { kind: 'key'; key: string }
+  | { kind: 'index'; index: number }
+  | { kind: 'filter'; field: string; expected: string };
+
+function isSensitiveHeaderName(headerName: string): boolean {
+  const lower = headerName.toLowerCase();
+  return (
+    SENSITIVE_HEADER_NAMES.has(lower) ||
+    lower.includes('token') ||
+    lower.includes('secret') ||
+    lower.includes('password')
+  );
+}
+
+function maskHeaderValue(value: string): string {
+  if (value.length <= HEADER_MASK_MIN_LENGTH) {
+    return '••••••••';
+  }
+  return `${value.slice(0, HEADER_MASK_EDGE_CHARS)}••••••••${value.slice(-HEADER_MASK_EDGE_CHARS)}`;
+}
+
+function sanitizeHeadersForLog(
+  headers: Record<string, string>
+): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    sanitized[key] = isSensitiveHeaderName(key) ? maskHeaderValue(value) : value;
+  }
+  return sanitized;
+}
 
 function interpolateTemplate(
   template: string,
   variables: Record<string, string>
 ): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, varPath: string) => {
-    const direct = variables[varPath];
-    if (typeof direct === 'string' && direct.length > 0) {
-      return direct;
+  return template.replace(
+    /\{\{\s*([a-zA-Z0-9_.\-[\]]+)\s*\}\}/g,
+    (_match, varPath: string) => {
+      const resolved = resolveFlowVariableValue(varPath, variables);
+      return typeof resolved === 'string' && resolved.length > 0 ? resolved : '';
     }
-    const dotIndex = varPath.indexOf('.');
-    if (dotIndex > 0) {
-      const rootName = varPath.slice(0, dotIndex);
-      const subPath = varPath.slice(dotIndex + 1);
-      const rootRaw = variables[rootName];
-      if (typeof rootRaw === 'string' && rootRaw.trim().startsWith('{')) {
-        try {
-          const parsed = JSON.parse(rootRaw) as unknown;
-          const extracted = extractJsonPathValue(parsed, subPath);
-          if (extracted.length > 0) {
-            return extracted;
-          }
-        } catch {
-          void 0;
-        }
-      }
-    }
-    return '';
-  });
+  );
 }
 
-function extractJsonPathValue(payload: unknown, pathExpr: string): string {
-  const cleanExpr = pathExpr.trim().replace(/^\$\.?/, '').replace(/\[(\d+)\]/g, '.$1');
-  const segments = cleanExpr.split('.').map((s) => s.trim()).filter(Boolean);
+function unquoteSegment(raw: string): string {
+  const trimmed = raw.trim();
+  if (
+    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parseJsonPathSegments(pathExpr: string): JsonPathSegment[] {
+  let expr = pathExpr.trim();
+  if (expr.startsWith('$')) {
+    expr = expr.slice(1);
+  }
+  if (expr.startsWith('.')) {
+    expr = expr.slice(1);
+  }
+
+  const segments: JsonPathSegment[] = [];
+  let cursor = 0;
+
+  while (cursor < expr.length) {
+    if (expr[cursor] === '.') {
+      cursor += 1;
+      continue;
+    }
+
+    if (expr[cursor] === '[') {
+      const closeIndex = findClosingBracket(expr, cursor + 1);
+      if (closeIndex === -1) {
+        break;
+      }
+      const inner = expr.slice(cursor + 1, closeIndex).trim();
+      segments.push(parseBracketSegment(inner));
+      cursor = closeIndex + 1;
+      continue;
+    }
+
+    let nextBoundary = cursor;
+    while (
+      nextBoundary < expr.length &&
+      expr[nextBoundary] !== '.' &&
+      expr[nextBoundary] !== '['
+    ) {
+      nextBoundary += 1;
+    }
+    const key = expr.slice(cursor, nextBoundary).trim();
+    if (key.length > 0) {
+      segments.push({ kind: 'key', key });
+    }
+    cursor = nextBoundary;
+  }
+
+  return segments;
+}
+
+function findClosingBracket(expr: string, startIndex: number): number {
+  let quoteChar: string | null = null;
+  for (let idx = startIndex; idx < expr.length; idx += 1) {
+    const ch = expr[idx];
+    if (quoteChar) {
+      if (ch === quoteChar && expr[idx - 1] !== '\\') {
+        quoteChar = null;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quoteChar = ch;
+      continue;
+    }
+    if (ch === ']') {
+      return idx;
+    }
+  }
+  return -1;
+}
+
+function parseBracketSegment(inner: string): JsonPathSegment {
+  if (/^\d+$/.test(inner)) {
+    return { kind: 'index', index: Number(inner) };
+  }
+
+  const jsonPathFilter = inner.match(
+    /^\?\(\s*@\.([a-zA-Z0-9_.-]+)\s*==\s*(['"]?)(.*?)\2\s*\)$/
+  );
+  if (jsonPathFilter) {
+    return {
+      kind: 'filter',
+      field: jsonPathFilter[1],
+      expected: jsonPathFilter[3]
+    };
+  }
+
+  const shortFilter = inner.match(/^([a-zA-Z0-9_.-]+)\s*=\s*(['"]?)(.*?)\2$/);
+  if (shortFilter) {
+    return {
+      kind: 'filter',
+      field: shortFilter[1],
+      expected: shortFilter[3]
+    };
+  }
+
+  return { kind: 'key', key: unquoteSegment(inner) };
+}
+
+function readObjectFieldString(
+  item: Record<string, unknown>,
+  fieldPath: string
+): string | null {
+  const keys = fieldPath.split('.').map((k) => k.trim()).filter(Boolean);
+  let cursor: unknown = item;
+  for (const key of keys) {
+    if (cursor === null || cursor === undefined || typeof cursor !== 'object' || Array.isArray(cursor)) {
+      return null;
+    }
+    cursor = (cursor as Record<string, unknown>)[key];
+  }
+  if (cursor === null || cursor === undefined || typeof cursor === 'object') {
+    return null;
+  }
+  return String(cursor).trim();
+}
+
+function extractJsonPathResult(
+  payload: unknown,
+  pathExpr: string
+): { matched: boolean; value: string } {
+  const segments = parseJsonPathSegments(pathExpr);
+  if (segments.length === 0) {
+    return { matched: false, value: '' };
+  }
+
   let cursor: unknown = payload;
   for (const segment of segments) {
     if (cursor === null || cursor === undefined || typeof cursor !== 'object') {
-      return '';
+      return { matched: false, value: '' };
     }
+
     if (Array.isArray(cursor)) {
-      const idx = Number(segment);
-      cursor = Number.isInteger(idx) ? cursor[idx] : undefined;
+      if (segment.kind === 'index') {
+        cursor = cursor[segment.index];
+      } else if (segment.kind === 'filter') {
+        const expected = segment.expected.trim();
+        cursor = cursor.find(
+          (entry) =>
+            entry !== null &&
+            typeof entry === 'object' &&
+            !Array.isArray(entry) &&
+            readObjectFieldString(entry as Record<string, unknown>, segment.field) === expected
+        );
+      } else {
+        const idx = Number(segment.key);
+        cursor = Number.isInteger(idx) ? cursor[idx] : undefined;
+      }
+    } else if (segment.kind === 'key') {
+      cursor = (cursor as Record<string, unknown>)[segment.key];
     } else {
-      cursor = (cursor as Record<string, unknown>)[segment];
+      return { matched: false, value: '' };
     }
   }
+
   if (cursor === null || cursor === undefined) {
-    return '';
+    return { matched: false, value: '' };
   }
-  return typeof cursor === 'string' ? cursor : JSON.stringify(cursor);
+  return {
+    matched: true,
+    value: typeof cursor === 'string' ? cursor : JSON.stringify(cursor)
+  };
 }
 
-export async function executeHttpRequestNode(
-  node: FlowNode,
-  variables: Record<string, string>
-): Promise<{
+export interface HttpNodeExecutionResult {
   ok: boolean;
   renderedUrl: string;
   method: string;
   statusCode: number | null;
   value: string;
   errorMessage: string | null;
-}> {
+  httpDetails: FlowHttpExecutionLog;
+}
+
+export async function executeHttpRequestNode(
+  node: FlowNode,
+  variables: Record<string, string>
+): Promise<HttpNodeExecutionResult> {
+  const startedAt = Date.now();
   const rawUrl = String(node.data.url ?? '').trim();
   const method = String(node.data.method ?? 'GET').toUpperCase();
   const renderedUrl = interpolateTemplate(rawUrl, variables);
-
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(renderedUrl);
-  } catch {
-    return {
-      ok: false,
-      renderedUrl,
-      method,
-      statusCode: null,
-      value: '',
-      errorMessage: `URL inválida en nodo HTTP: "${renderedUrl}"`
-    };
-  }
-
-  try {
-    const checked = await resolveAndPinExternalUrl(parsedUrl.toString(), {
-      skipDnsResolution: true
-    });
-    parsedUrl = checked.url;
-  } catch (err) {
-    return {
-      ok: false,
-      renderedUrl,
-      method,
-      statusCode: null,
-      value: '',
-      errorMessage:
-        err instanceof Error
-          ? err.message
-          : `Host bloqueado por política de seguridad SSRF: ${parsedUrl.hostname}`
-    };
-  }
+  const responseVariable = sanitizeVariableName(
+    node.data.responseVariable,
+    'http_response'
+  );
+  const rawResponsePath =
+    typeof node.data.responsePath === 'string' ? node.data.responsePath.trim() : '';
+  const renderedResponsePath = rawResponsePath
+    ? interpolateTemplate(rawResponsePath, variables).trim()
+    : '';
 
   const headers: Record<string, string> = {
     Accept: 'application/json, text/plain'
@@ -129,34 +291,106 @@ export async function executeHttpRequestNode(
 
   const rawBody = typeof node.data.bodyTemplate === 'string' ? node.data.bodyTemplate : '';
   const hasBody = !['GET', 'HEAD'].includes(method) && rawBody.trim().length > 0;
-  if (hasBody && !headers['Content-Type']) {
+  const renderedBody = hasBody ? interpolateTemplate(rawBody, variables) : null;
+  const hasContentTypeHeader = Object.keys(headers).some(
+    (key) => key.toLowerCase() === 'content-type'
+  );
+  if (hasBody && !hasContentTypeHeader) {
     headers['Content-Type'] = 'application/json';
+  }
+  const safeRequestHeaders = sanitizeHeadersForLog(headers);
+
+  const buildResult = (params: {
+    ok: boolean;
+    statusCode: number | null;
+    value: string;
+    errorMessage: string | null;
+    responseHeaders?: Record<string, string>;
+    responseBody?: string;
+    responsePathMatched?: boolean;
+  }): HttpNodeExecutionResult => {
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    const httpDetails: FlowHttpExecutionLog = {
+      method,
+      url: renderedUrl,
+      statusCode: params.statusCode,
+      ok: params.ok,
+      durationMs,
+      requestHeaders: safeRequestHeaders,
+      requestBody: renderedBody,
+      responseHeaders: sanitizeHeadersForLog(params.responseHeaders ?? {}),
+      responseBody: (params.responseBody ?? '').slice(0, MAX_RESPONSE_LOG_CHARS),
+      responseVariable,
+      responsePath: renderedResponsePath || null,
+      responsePathMatched: params.responsePathMatched ?? false,
+      extractedValue: params.value,
+      errorMessage: params.errorMessage
+    };
+
+    return {
+      ok: params.ok,
+      renderedUrl,
+      method,
+      statusCode: params.statusCode,
+      value: params.value,
+      errorMessage: params.errorMessage,
+      httpDetails
+    };
+  };
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(renderedUrl);
+  } catch {
+    return buildResult({
+      ok: false,
+      statusCode: null,
+      value: '',
+      errorMessage: `URL inválida en nodo HTTP: "${renderedUrl}"`
+    });
+  }
+
+  try {
+    const checked = await resolveAndPinExternalUrl(parsedUrl.toString(), {
+      skipDnsResolution: true
+    });
+    parsedUrl = checked.url;
+  } catch (err) {
+    return buildResult({
+      ok: false,
+      statusCode: null,
+      value: '',
+      errorMessage:
+        err instanceof Error
+          ? err.message
+          : `Host bloqueado por política de seguridad SSRF: ${parsedUrl.hostname}`
+    });
   }
 
   try {
     const response = await pinnedSafeFetch(parsedUrl.toString(), {
       method,
       headers,
-      body: hasBody ? interpolateTemplate(rawBody, variables) : undefined,
+      body: renderedBody ?? undefined,
       timeoutMs: ACTION_HTTP_TIMEOUT_MS,
       maxBytes: MAX_RESPONSE_BYTES
     });
 
     if (response.status >= 300 && response.status < 400) {
-      return {
+      return buildResult({
         ok: false,
-        renderedUrl,
-        method,
         statusCode: response.status,
         value: '',
+        responseHeaders: response.headers,
+        responseBody: response.text,
         errorMessage: 'Redirección HTTP bloqueada por política de seguridad SSRF.'
-      };
+      });
     }
 
     const rawText = response.text.trim();
     let extractedValue = rawText.slice(0, MAX_RESPONSE_PREVIEW_CHARS);
+    let responsePathMatched = renderedResponsePath.length === 0;
 
-    const jsonPath = typeof node.data.responsePath === 'string' ? node.data.responsePath.trim() : '';
     const contentType = (response.headers['content-type'] ?? '').toLowerCase();
     const looksLikeJson =
       contentType.includes('application/json') ||
@@ -167,8 +401,10 @@ export async function executeHttpRequestNode(
     if (looksLikeJson && rawText.length > 0) {
       try {
         const parsedJson = JSON.parse(rawText) as unknown;
-        if (jsonPath) {
-          extractedValue = extractJsonPathValue(parsedJson, jsonPath);
+        if (renderedResponsePath) {
+          const pathResult = extractJsonPathResult(parsedJson, renderedResponsePath);
+          extractedValue = pathResult.value;
+          responsePathMatched = pathResult.matched;
         } else if (typeof parsedJson === 'string') {
           extractedValue = parsedJson.slice(0, MAX_RESPONSE_PREVIEW_CHARS);
         } else if (typeof parsedJson === 'number' || typeof parsedJson === 'boolean') {
@@ -177,38 +413,44 @@ export async function executeHttpRequestNode(
           extractedValue = JSON.stringify(parsedJson).slice(0, MAX_RESPONSE_PREVIEW_CHARS);
         }
       } catch {
-        extractedValue = rawText.slice(0, MAX_RESPONSE_PREVIEW_CHARS);
+        extractedValue = renderedResponsePath
+          ? ''
+          : rawText.slice(0, MAX_RESPONSE_PREVIEW_CHARS);
+        responsePathMatched = renderedResponsePath.length === 0;
       }
+    } else if (renderedResponsePath) {
+      extractedValue = '';
+      responsePathMatched = false;
     }
 
     if (!response.ok) {
-      return {
+      return buildResult({
         ok: false,
-        renderedUrl,
-        method,
         statusCode: response.status,
         value: extractedValue,
+        responseHeaders: response.headers,
+        responseBody: response.text,
+        responsePathMatched,
         errorMessage: `HTTP ${response.status} al consultar ${parsedUrl.hostname}`
-      };
+      });
     }
 
-    return {
+    return buildResult({
       ok: true,
-      renderedUrl,
-      method,
       statusCode: response.status,
       value: extractedValue,
+      responseHeaders: response.headers,
+      responseBody: response.text,
+      responsePathMatched,
       errorMessage: null
-    };
+    });
   } catch (err) {
-    return {
+    return buildResult({
       ok: false,
-      renderedUrl,
-      method,
       statusCode: null,
       value: '',
       errorMessage: err instanceof Error ? err.message : 'Error de red en petición HTTP'
-    };
+    });
   }
 }
 

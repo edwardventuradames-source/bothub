@@ -22,8 +22,29 @@ import {
   syncFlowToDb,
   deleteFlowFromDb
 } from './persistence-flows.js';
+import {
+  HydratableDbMessageRecord,
+  deleteApiKeyFromDb,
+  deleteOutboundWebhookFromDb,
+  isPlatformDbEnabled,
+  mapDbMessageToDto,
+  syncApiKeyToDb,
+  syncConversationMessagesToDb,
+  syncLogToDb,
+  syncOutboundWebhookToDb
+} from './persistence-platform.js';
 
-export { syncFlowToDb, deleteFlowFromDb };
+export {
+  deleteApiKeyFromDb,
+  deleteFlowFromDb,
+  deleteOutboundWebhookFromDb,
+  mapDbMessageToDto,
+  syncApiKeyToDb,
+  syncConversationMessagesToDb,
+  syncFlowToDb,
+  syncLogToDb,
+  syncOutboundWebhookToDb
+};
 import {
   StoredApiKeyRecord,
   StoredChatwootSecrets,
@@ -94,19 +115,22 @@ export async function initializeRedisIfConfigured(): Promise<void> {
   }
 }
 
-export async function hydrateStoreFromDatabase(target: {
-  users: StoredUserRecord[];
-  bots: BotDto[];
-  chatwootSecrets: Map<string, StoredChatwootSecrets>;
-  cloudApiSecrets: Map<string, StoredCloudApiSecrets>;
-  flows: FlowDto[];
-  contacts: ContactDto[];
-  conversations: ConversationDto[];
-  logs: BotLogDto[];
-  apiKeys: StoredApiKeyRecord[];
-  outboundWebhooks: StoredOutboundWebhookRecord[];
-}): Promise<boolean> {
-  if (!isDatabaseConfigured()) {
+export async function hydrateStoreFromDatabase(
+  target: {
+    users: StoredUserRecord[];
+    bots: BotDto[];
+    chatwootSecrets: Map<string, StoredChatwootSecrets>;
+    cloudApiSecrets: Map<string, StoredCloudApiSecrets>;
+    flows: FlowDto[];
+    contacts: ContactDto[];
+    conversations: ConversationDto[];
+    logs: BotLogDto[];
+    apiKeys: StoredApiKeyRecord[];
+    outboundWebhooks: StoredOutboundWebhookRecord[];
+  },
+  options: { forceDb?: boolean } = {}
+): Promise<boolean> {
+  if (!isPlatformDbEnabled(options.forceDb)) {
     return false;
   }
 
@@ -159,19 +183,27 @@ export async function hydrateStoreFromDatabase(target: {
           accountId: cw.accountId,
           inboxId: cw.inboxId,
           encryptedApiAccessToken: cw.encryptedApiAccessToken,
+          ...(cw.encryptedUserApiAccessToken
+            ? { encryptedUserApiAccessToken: cw.encryptedUserApiAccessToken }
+            : {}),
           encryptedWebhookToken: cw.encryptedWebhookToken,
           handoffReturnCommand: cw.handoffReturnCommand,
           isActive: cw.isConnected,
           lastSyncedAt: cw.lastVerifiedAt ? cw.lastVerifiedAt.toISOString() : null
         });
         const rawApi = decryptSecret(cw.encryptedApiAccessToken);
+        const rawUserApi = cw.encryptedUserApiAccessToken
+          ? decryptSecret(cw.encryptedUserApiAccessToken)
+          : '';
         const rawWh = decryptSecret(cw.encryptedWebhookToken);
         chatwootDto = {
           baseUrl: cw.baseUrl,
           accountId: cw.accountId,
           inboxId: cw.inboxId,
           hasApiAccessToken: rawApi.length > 0,
+          hasUserApiAccessToken: rawUserApi.length > 0,
           maskedApiAccessToken: maskSecretValue(rawApi),
+          maskedUserApiAccessToken: rawUserApi ? maskSecretValue(rawUserApi) : '',
           webhookTokenPreview: maskSecretValue(rawWh),
           webhookEndpointPath: `/api/webhooks/chatwoot/${dbBot.id}`,
           handoffReturnCommand: cw.handoffReturnCommand,
@@ -296,30 +328,27 @@ export async function hydrateStoreFromDatabase(target: {
 
     const hydratedConversations: ConversationDto[] = dbConversations.map((conv) => {
       const sessionState = (conv.sessionStateJson as Record<string, unknown>) ?? {};
-      const messages: ConversationMessageDto[] = conv.messages.map((m) => ({
-        id: m.id,
-        senderType:
-          m.direction === 'INBOUND'
-            ? 'CONTACT'
-            : m.direction === 'OUTBOUND_AGENT'
-              ? 'AGENT'
-              : 'BOT',
-        senderName:
-          m.direction === 'INBOUND'
-            ? conv.contact.name ?? conv.contact.phoneNumber
-            : conv.bot.name,
-        content: m.contentText,
-        mediaUrl: m.mediaUrl ?? undefined,
-        executedNodeId: m.executedNodeId ?? undefined,
-        createdAt: m.createdAt.toISOString()
-      }));
+      const contactDisplayName = conv.contact.name ?? conv.contact.phoneNumber;
+      const dbMessages: ConversationMessageDto[] = conv.messages.map((m) =>
+        mapDbMessageToDto(
+          m as HydratableDbMessageRecord,
+          contactDisplayName,
+          conv.bot.name
+        )
+      );
+      const diskConv = target.conversations.find((c) => c.id === conv.id);
+      const messages =
+        dbMessages.length > 0 ? dbMessages : (diskConv?.messages ?? []);
+      if (dbMessages.length === 0 && messages.length > 0) {
+        void syncConversationMessagesToDb(conv.id, messages, options.forceDb);
+      }
 
       return {
         id: conv.id,
         botId: conv.botId,
         botName: conv.bot.name,
         contactId: conv.contactId,
-        contactName: conv.contact.name ?? conv.contact.phoneNumber,
+        contactName: contactDisplayName,
         contactPhone: conv.contact.phoneNumber,
         chatwootConversationId: conv.chatwootConversationId,
         status: mapPrismaConversationStatus(conv.status, sessionState),
@@ -345,7 +374,7 @@ export async function hydrateStoreFromDatabase(target: {
             ? sessionState.handoffReason
             : null,
         lastMessagePreview:
-          messages[messages.length - 1]?.content ?? '',
+          messages[messages.length - 1]?.content ?? diskConv?.lastMessagePreview ?? '',
         lastActivityAt: conv.lastMessageAt.toISOString(),
         messages,
         executionTrace: Array.isArray(sessionState.executionTrace)
@@ -353,6 +382,27 @@ export async function hydrateStoreFromDatabase(target: {
           : []
       };
     });
+
+    const todayKey = new Date().toISOString().slice(0, 10);
+    for (const bot of hydratedBots) {
+      bot.messagesToday = hydratedConversations
+        .filter((conv) => conv.botId === bot.id)
+        .reduce(
+          (sum, conv) =>
+            sum +
+            conv.messages.filter((msg) => msg.createdAt.slice(0, 10) === todayKey)
+              .length,
+          0
+        );
+    }
+    for (const contact of hydratedContacts) {
+      const count = hydratedConversations.filter(
+        (conv) => conv.contactId === contact.id
+      ).length;
+      if (count > 0) {
+        contact.conversationsCount = count;
+      }
+    }
 
     const dbLogs = await prisma.botLog.findMany({
       include: { bot: true },
@@ -534,6 +584,7 @@ export async function syncChatwootSecretsToDb(
         accountId: secrets.accountId,
         inboxId: secrets.inboxId,
         encryptedApiAccessToken: secrets.encryptedApiAccessToken,
+        encryptedUserApiAccessToken: secrets.encryptedUserApiAccessToken ?? null,
         encryptedWebhookToken: secrets.encryptedWebhookToken,
         handoffReturnCommand: secrets.handoffReturnCommand,
         isConnected: secrets.isActive,
@@ -545,6 +596,7 @@ export async function syncChatwootSecretsToDb(
         accountId: secrets.accountId,
         inboxId: secrets.inboxId,
         encryptedApiAccessToken: secrets.encryptedApiAccessToken,
+        encryptedUserApiAccessToken: secrets.encryptedUserApiAccessToken ?? null,
         encryptedWebhookToken: secrets.encryptedWebhookToken,
         handoffReturnCommand: secrets.handoffReturnCommand,
         isConnected: secrets.isActive,
@@ -558,15 +610,21 @@ export async function syncChatwootSecretsToDb(
 
 export async function syncConversationStateToDb(
   contact: ContactDto,
-  conversation: ConversationDto
+  conversation: ConversationDto,
+  forceDb = false
 ): Promise<void> {
-  if (!isDatabaseConfigured()) return;
+  if (!isPlatformDbEnabled(forceDb)) return;
   try {
     const botExists = await prisma.bot.findUnique({ where: { id: conversation.botId } });
     if (!botExists) return;
 
-    await prisma.contact.upsert({
-      where: { id: contact.id },
+    const persistedContact = await prisma.contact.upsert({
+      where: {
+        botId_phoneNumber: {
+          botId: conversation.botId,
+          phoneNumber: contact.phoneNumber
+        }
+      },
       update: {
         name: contact.name,
         chatwootContactId: contact.chatwootContactId,
@@ -590,6 +648,7 @@ export async function syncConversationStateToDb(
     await prisma.conversation.upsert({
       where: { id: conversation.id },
       update: {
+        contactId: persistedContact.id,
         chatwootConversationId: conversation.chatwootConversationId,
         status: toPrismaConversationStatus(conversation.status),
         currentNodeId: conversation.currentNodeId,
@@ -608,7 +667,7 @@ export async function syncConversationStateToDb(
         id: conversation.id,
         organizationId: contact.organizationId,
         botId: conversation.botId,
-        contactId: contact.id,
+        contactId: persistedContact.id,
         chatwootConversationId: conversation.chatwootConversationId,
         status: toPrismaConversationStatus(conversation.status),
         currentNodeId: conversation.currentNodeId,
@@ -624,6 +683,12 @@ export async function syncConversationStateToDb(
         })
       }
     });
+
+    await syncConversationMessagesToDb(
+      conversation.id,
+      conversation.messages,
+      forceDb
+    );
   } catch (err) {
     logger.warn({ conversationId: conversation.id, err }, 'Failed syncing conversation to PostgreSQL');
   }
@@ -646,30 +711,6 @@ export async function syncContactToDb(contact: ContactDto): Promise<void> {
     });
   } catch (err) {
     logger.warn({ contactId: contact.id, err }, 'Failed syncing contact to PostgreSQL');
-  }
-}
-
-export async function syncLogToDb(
-  organizationId: string,
-  entry: BotLogDto
-): Promise<void> {
-  if (!isDatabaseConfigured()) return;
-  try {
-    const orgExists = await prisma.organization.findUnique({ where: { id: organizationId } });
-    if (!orgExists) return;
-    await prisma.botLog.create({
-      data: {
-        id: entry.id,
-        organizationId,
-        botId: entry.botId,
-        level: entry.level,
-        event: entry.event,
-        message: entry.message,
-        metadataJson: toJsonInput(entry.metadata)
-      }
-    });
-  } catch {
-    void 0;
   }
 }
 

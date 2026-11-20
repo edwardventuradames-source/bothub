@@ -14,9 +14,13 @@ import {
   runtimeStore
 } from '../../lib/runtime-store.js';
 import {
+  deleteApiKeyFromDb,
+  deleteOutboundWebhookFromDb,
   isDatabaseConfigured,
+  syncApiKeyToDb,
   syncContactToDb,
-  syncConversationStateToDb
+  syncConversationStateToDb,
+  syncOutboundWebhookToDb
 } from '../../lib/persistence.js';
 import { prisma } from '../../lib/prisma.js';
 import { assertSafeExternalUrl } from '../../lib/ssrf-guard.js';
@@ -536,6 +540,10 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         parsed.data.name,
         parsed.data.scopes
       );
+      const storedKey = runtimeStore.apiKeys.find((k) => k.id === apiKey.id);
+      if (storedKey) {
+        void syncApiKeyToDb(storedKey);
+      }
       return reply.status(201).send({ apiKey });
     }
   );
@@ -564,6 +572,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         (k) => !(k.id === request.params.id && k.organizationId === orgId)
       );
       runtimeStore.persistStateToDisk();
+      void deleteApiKeyFromDb(request.params.id, orgId);
       return { success: true };
     }
   );
@@ -606,6 +615,12 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         secretToken: parsed.data.secretToken,
         isActive: parsed.data.isActive
       });
+      const storedWebhook = runtimeStore.outboundWebhooks.find(
+        (w) => w.id === webhook.id
+      );
+      if (storedWebhook) {
+        void syncOutboundWebhookToDb(storedWebhook);
+      }
       return reply.status(201).send({ webhook });
     }
   );
@@ -634,6 +649,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         (w) => !(w.id === request.params.id && w.organizationId === orgId)
       );
       runtimeStore.persistStateToDisk();
+      void deleteOutboundWebhookFromDb(request.params.id, orgId);
       return { success: true };
     }
   );

@@ -1,9 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Node } from '@xyflow/react';
-import { RefreshCw, Tag } from 'lucide-react';
-import { ChatwootLabelDto, FlowNodeType } from '@bothub/shared';
+import { Play, RefreshCw, Tag } from 'lucide-react';
+import {
+  ChatwootLabelDto,
+  FlowHttpExecutionLog,
+  FlowNode,
+  FlowNodeType
+} from '@bothub/shared';
+import { flowsApi } from '../../lib/api.js';
+import { HttpExecutionDetailsCard } from './HttpExecutionDetailsCard.js';
 
 interface FlowActionNodesInspectorProps {
+  flowId?: string;
   selectedNode: Node;
   nodeType: FlowNodeType;
   chatwootLabels: ChatwootLabelDto[];
@@ -14,7 +22,37 @@ interface FlowActionNodesInspectorProps {
   onUpdateData: (key: string, value: unknown) => void;
 }
 
+function collectHttpTemplateVariables(data: Record<string, unknown>): string[] {
+  const sources: string[] = [
+    String(data.url ?? ''),
+    String(data.responsePath ?? ''),
+    String(data.bodyTemplate ?? '')
+  ];
+  if (data.headers && typeof data.headers === 'object') {
+    for (const val of Object.values(data.headers as Record<string, unknown>)) {
+      if (typeof val === 'string') {
+        sources.push(val);
+      }
+    }
+  }
+  const found = new Set<string>();
+  const regex = /\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g;
+  for (const text of sources) {
+    let match: RegExpExecArray | null = regex.exec(text);
+    while (match) {
+      const rootName = match[1].split('.')[0]?.trim();
+      if (rootName) {
+        found.add(rootName);
+      }
+      match = regex.exec(text);
+    }
+    regex.lastIndex = 0;
+  }
+  return Array.from(found);
+}
+
 export function FlowActionNodesInspector({
+  flowId,
   selectedNode,
   nodeType,
   chatwootLabels,
@@ -27,6 +65,18 @@ export function FlowActionNodesInspector({
   const [tagInputText, setTagInputText] = useState('');
   const [headersInputText, setHeadersInputText] = useState('');
   const [headersJsonError, setHeadersJsonError] = useState<string | null>(null);
+  const [testVariables, setTestVariables] = useState<Record<string, string>>({});
+  const [isTestingHttp, setIsTestingHttp] = useState(false);
+  const [httpTestResult, setHttpTestResult] = useState<FlowHttpExecutionLog | null>(null);
+  const [httpTestError, setHttpTestError] = useState<string | null>(null);
+
+  const detectedHttpVars = useMemo(
+    () =>
+      nodeType === 'HTTP_REQUEST'
+        ? collectHttpTemplateVariables(selectedNode.data as Record<string, unknown>)
+        : [],
+    [nodeType, selectedNode.data]
+  );
 
   useEffect(() => {
     const rawTags = Array.isArray(selectedNode.data.tags)
@@ -40,7 +90,41 @@ export function FlowActionNodesInspector({
       setHeadersInputText('');
     }
     setHeadersJsonError(null);
+    setHttpTestResult(null);
+    setHttpTestError(null);
   }, [selectedNode.id]);
+
+  async function handleRunHttpNodeTest(): Promise<void> {
+    if (!flowId || isTestingHttp) {
+      return;
+    }
+    setIsTestingHttp(true);
+    setHttpTestError(null);
+    try {
+      const { label: _lbl, nodeType: _nt, ...cleanData } = selectedNode.data as Record<
+        string,
+        unknown
+      >;
+      const payloadNode: FlowNode = {
+        id: selectedNode.id,
+        type: 'HTTP_REQUEST',
+        position: selectedNode.position,
+        data: cleanData
+      };
+      const res = await flowsApi.testHttpNode(flowId, {
+        node: payloadNode,
+        variables: testVariables
+      });
+      setHttpTestResult(res.httpDetails);
+    } catch (err) {
+      setHttpTestError(
+        err instanceof Error ? err.message : 'No se pudo ejecutar la prueba HTTP.'
+      );
+      setHttpTestResult(null);
+    } finally {
+      setIsTestingHttp(false);
+    }
+  }
 
   if (nodeType === 'HTTP_REQUEST') {
     return (
@@ -59,6 +143,7 @@ export function FlowActionNodesInspector({
             <option value="POST">POST</option>
             <option value="PUT">PUT</option>
             <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
           </select>
         </div>
         <div>
@@ -87,16 +172,19 @@ export function FlowActionNodesInspector({
         </div>
         <div>
           <label htmlFor="http-path" className="mb-1 block text-xs font-bold text-soft-ink">
-            Ruta JSON a Extraer (Opcional, ej: data.status)
+            Ruta JSON a Extraer (Opcional)
           </label>
           <input
             id="http-path"
             type="text"
-            placeholder="data.status"
+            placeholder="data.status o data[cedula={{cedula}}].status"
             value={String(selectedNode.data.responsePath ?? '')}
             onChange={(e) => onUpdateData('responsePath', e.target.value)}
             className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
           />
+          <p className="mt-1 text-[10px] leading-snug text-soft-muted">
+            Objeto: <code>data.status</code> · Lista por índice: <code>data[0].status</code> · Buscar en lista: <code>data[cedula={'{{cedula}}'}].status</code>
+          </p>
         </div>
         {String(selectedNode.data.method ?? 'GET') !== 'GET' ? (
           <div>
@@ -148,6 +236,64 @@ export function FlowActionNodesInspector({
             <p className="mt-1 text-[10px] font-bold text-soft-danger">{headersJsonError}</p>
           ) : null}
         </div>
+
+        {flowId ? (
+          <div className="mt-1 flex flex-col gap-2.5 rounded-xl border border-soft-line bg-soft-bg p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-soft-blue">
+                Probar Petición HTTP
+              </span>
+              <button
+                type="button"
+                disabled={isTestingHttp}
+                onClick={() => void handleRunHttpNodeTest()}
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-brand-gradient px-3 py-1 text-[11px] font-extrabold text-white shadow-brand-icon disabled:opacity-60"
+              >
+                <Play className="h-3 w-3" />
+                <span>{isTestingHttp ? 'Enviando...' : 'Probar'}</span>
+              </button>
+            </div>
+
+            {detectedHttpVars.length > 0 ? (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[10px] font-bold text-soft-muted">
+                  Variables de prueba detectadas:
+                </span>
+                {detectedHttpVars.map((varName) => (
+                  <div key={varName} className="flex items-center gap-2">
+                    <label
+                      htmlFor={`http-test-var-${varName}`}
+                      className="w-24 shrink-0 truncate font-mono text-[10px] font-bold text-soft-blue"
+                    >
+                      {`{{${varName}}}`}
+                    </label>
+                    <input
+                      id={`http-test-var-${varName}`}
+                      type="text"
+                      placeholder={`Valor de ${varName}...`}
+                      value={testVariables[varName] ?? ''}
+                      onChange={(e) =>
+                        setTestVariables((prev) => ({
+                          ...prev,
+                          [varName]: e.target.value
+                        }))
+                      }
+                      className="min-w-0 flex-1 rounded-lg border border-soft-line bg-soft-card px-2 py-1 text-[11px] text-soft-ink"
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {httpTestError ? (
+              <p className="text-[11px] font-bold text-soft-danger">{httpTestError}</p>
+            ) : null}
+
+            {httpTestResult ? (
+              <HttpExecutionDetailsCard details={httpTestResult} />
+            ) : null}
+          </div>
+        ) : null}
       </>
     );
   }

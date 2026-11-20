@@ -3,7 +3,8 @@ import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import {
   hydrateStoreFromDatabase,
-  initializeRedisIfConfigured
+  initializeRedisIfConfigured,
+  syncLogToDb
 } from './lib/persistence.js';
 import { runtimeStore } from './lib/runtime-store.js';
 import { attachSocketServer } from './plugins/socket.js';
@@ -12,6 +13,9 @@ import { whatsappProvider } from './modules/whatsapp/whatsapp.provider.js';
 
 async function startServer(): Promise<void> {
   await initializeRedisIfConfigured();
+  runtimeStore.setLogPersistenceHandler((organizationId, entry) => {
+    void syncLogToDb(organizationId, entry);
+  });
   await hydrateStoreFromDatabase(runtimeStore);
 
   const initialEmail = process.env.INITIAL_ADMIN_EMAIL?.trim();

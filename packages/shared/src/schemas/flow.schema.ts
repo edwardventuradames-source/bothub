@@ -95,12 +95,41 @@ export const FlowSimulationRequestSchema = z.object({
 });
 export type FlowSimulationRequest = z.input<typeof FlowSimulationRequestSchema>;
 
+export interface FlowHttpExecutionLog {
+  method: string;
+  url: string;
+  statusCode: number | null;
+  ok: boolean;
+  durationMs: number;
+  requestHeaders: Record<string, string>;
+  requestBody: string | null;
+  responseHeaders: Record<string, string>;
+  responseBody: string;
+  responseVariable: string;
+  responsePath: string | null;
+  responsePathMatched: boolean;
+  extractedValue: string;
+  errorMessage: string | null;
+}
+
+export const TestFlowHttpNodeInputSchema = z.object({
+  node: FlowNodeSchema,
+  variables: z.record(z.string(), z.string()).default({})
+});
+export type TestFlowHttpNodeInput = z.input<typeof TestFlowHttpNodeInputSchema>;
+
+export interface TestFlowHttpNodeResponse {
+  ok: boolean;
+  httpDetails: FlowHttpExecutionLog;
+}
+
 export interface FlowExecutionStepLog {
   nodeId: string;
   nodeType: FlowNodeType;
   title: string;
   detail: string;
   timestamp: string;
+  httpDetails?: FlowHttpExecutionLog;
 }
 
 export interface FlowSimulationBotReply {

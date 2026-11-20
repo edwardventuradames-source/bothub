@@ -679,6 +679,7 @@ export function FlowsBuilderPage() {
             />
 
             <FlowNodeInspector
+              flowId={activeFlow.id}
               selectedNode={selectedNode}
               allNodes={nodes}
               edges={edges}

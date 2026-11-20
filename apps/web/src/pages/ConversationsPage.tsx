@@ -15,6 +15,10 @@ import { ConversationDto } from '@bothub/shared';
 import { platformApi } from '../lib/api.js';
 import { createAuthenticatedSocket } from '../lib/socket.js';
 import { useAuthStore } from '../store/auth.store.js';
+import {
+  HttpExecutionDetailsCard,
+  getHttpStatusBadgeInfo
+} from '../components/flows/HttpExecutionDetailsCard.js';
 
 export function ConversationsPage() {
   const outletContext = useOutletContext<{ searchQuery?: string } | null>();
@@ -509,13 +513,37 @@ export function ConversationsPage() {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <strong className="truncate text-soft-ink">{step.title}</strong>
-                            <span className="shrink-0 rounded bg-soft-blue/10 px-1.5 py-0.5 text-[10px] font-extrabold text-soft-blue">
-                              {step.nodeType}
-                            </span>
+                            <div className="flex shrink-0 items-center gap-1">
+                              {step.httpDetails ? (
+                                <span
+                                  className={`rounded border px-1.5 py-0.5 text-[10px] font-extrabold ${
+                                    getHttpStatusBadgeInfo(
+                                      step.httpDetails.statusCode,
+                                      step.httpDetails.ok
+                                    ).badgeClass
+                                  }`}
+                                >
+                                  {step.httpDetails.statusCode ?? 'ERR'}
+                                </span>
+                              ) : null}
+                              <span className="rounded bg-soft-blue/10 px-1.5 py-0.5 text-[10px] font-extrabold text-soft-blue">
+                                {step.nodeType}
+                              </span>
+                            </div>
                           </div>
                           <p className="mt-1 text-[11px] text-soft-muted">
                             {step.detail}
                           </p>
+                          {step.httpDetails ? (
+                            <details className="mt-2">
+                              <summary className="cursor-pointer text-[11px] font-extrabold text-soft-blue">
+                                Ver detalle HTTP (estado, envío y respuesta)
+                              </summary>
+                              <div className="mt-2">
+                                <HttpExecutionDetailsCard details={step.httpDetails} />
+                              </div>
+                            </details>
+                          ) : null}
                         </div>
                       ))
                     )}

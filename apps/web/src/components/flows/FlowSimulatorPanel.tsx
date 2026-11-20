@@ -1,5 +1,5 @@
-import { FormEvent, KeyboardEvent, useState } from 'react';
-import { Bot, Play, RotateCcw, Send, Sparkles, Tag } from 'lucide-react';
+import { FormEvent, KeyboardEvent, useId, useRef, useState } from 'react';
+import { Bot, Globe, Play, RotateCcw, Send, Sparkles, Tag } from 'lucide-react';
 import {
   FlowEdge,
   FlowExecutionStepLog,
@@ -7,6 +7,10 @@ import {
   FlowSimulationBotReply
 } from '@bothub/shared';
 import { flowsApi } from '../../lib/api.js';
+import {
+  HttpExecutionDetailsCard,
+  getHttpStatusBadgeInfo
+} from './HttpExecutionDetailsCard.js';
 
 interface ChatBubble {
   id: string;
@@ -55,6 +59,31 @@ export function FlowSimulatorPanel({
   const [traceLogs, setTraceLogs] = useState<FlowExecutionStepLog[]>([]);
   const [handoffBanner, setHandoffBanner] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [activeTab, setActiveTab] = useState<'simulator' | 'http'>('simulator');
+  const simTabId = useId();
+  const httpTabId = useId();
+  const simTabRef = useRef<HTMLButtonElement | null>(null);
+  const httpTabRef = useRef<HTMLButtonElement | null>(null);
+
+  const httpTraceSteps = traceLogs.filter(
+    (step): step is FlowExecutionStepLog & { httpDetails: NonNullable<FlowExecutionStepLog['httpDetails']> } =>
+      Boolean(step.httpDetails)
+  );
+  const latestHttpStep = httpTraceSteps[0] ?? null;
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>): void {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+      return;
+    }
+    event.preventDefault();
+    const nextTab = activeTab === 'simulator' ? 'http' : 'simulator';
+    setActiveTab(nextTab);
+    if (nextTab === 'simulator') {
+      simTabRef.current?.focus();
+    } else {
+      httpTabRef.current?.focus();
+    }
+  }
 
   async function sendSimulatorInput(textToSend: string): Promise<void> {
     const trimmed = textToSend.trim();
@@ -164,6 +193,7 @@ export function FlowSimulatorPanel({
     setTags([]);
     setTraceLogs([]);
     setHandoffBanner(null);
+    setActiveTab('simulator');
     setMessages([
       {
         id: `reset-${Date.now()}`,
@@ -181,9 +211,9 @@ export function FlowSimulatorPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col justify-between overflow-y-auto rounded-2xl border border-soft-line bg-soft-card p-4 shadow-soft">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-soft-line pb-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-soft-line bg-soft-card p-4 shadow-soft">
+      <div className="shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5">
           <div className="flex min-w-0 items-center gap-2">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-brand-gradient text-white shadow-brand-icon">
               <Bot className="h-4 w-4" />
@@ -209,176 +239,324 @@ export function FlowSimulatorPanel({
           </button>
         </div>
 
-        <div className="mt-3 flex h-56 flex-col gap-2.5 overflow-y-auto rounded-xl bg-soft-bg p-3">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex flex-col ${
-                msg.sender === 'user' ? 'items-end' : 'items-start'
-              }`}
-            >
-              <div
-                className={`max-w-[90%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed ${
-                  msg.sender === 'user'
-                    ? 'bg-brand-gradient text-white shadow-brand-icon'
-                    : 'border border-soft-line bg-soft-card text-soft-ink'
+        <div
+          role="tablist"
+          aria-label="Vistas del probador de flujo"
+          className="flex flex-nowrap gap-3 overflow-x-auto border-b border-soft-line"
+        >
+          <button
+            ref={simTabRef}
+            type="button"
+            role="tab"
+            id={simTabId}
+            aria-selected={activeTab === 'simulator'}
+            tabIndex={activeTab === 'simulator' ? 0 : -1}
+            onClick={() => setActiveTab('simulator')}
+            onKeyDown={handleTabKeyDown}
+            className="shrink-0 border-b-2 border-transparent px-1 py-2 text-[11px] font-extrabold text-soft-muted transition-colors hover:text-soft-ink aria-selected:border-soft-blue aria-selected:text-soft-blue"
+          >
+            Simulador
+          </button>
+          <button
+            ref={httpTabRef}
+            type="button"
+            role="tab"
+            id={httpTabId}
+            aria-selected={activeTab === 'http'}
+            tabIndex={activeTab === 'http' ? 0 : -1}
+            onClick={() => setActiveTab('http')}
+            onKeyDown={handleTabKeyDown}
+            className="inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent px-1 py-2 text-[11px] font-extrabold text-soft-muted transition-colors hover:text-soft-ink aria-selected:border-soft-blue aria-selected:text-soft-blue"
+          >
+            <Globe className="h-3.5 w-3.5 shrink-0" />
+            <span>Peticiones HTTP ({httpTraceSteps.length})</span>
+            {latestHttpStep ? (
+              <span
+                className={`rounded border px-1.5 py-0.5 text-[9px] font-extrabold ${
+                  getHttpStatusBadgeInfo(
+                    latestHttpStep.httpDetails.statusCode,
+                    latestHttpStep.httpDetails.ok
+                  ).badgeClass
                 }`}
               >
-                {msg.text ? <p className="whitespace-pre-wrap">{msg.text}</p> : null}
-
-                {msg.mediaUrl ? (
-                  <div className="mt-2 overflow-hidden rounded-xl border border-soft-line bg-soft-bg p-1.5">
-                    {msg.mediaType === 'audio' ? (
-                      <audio controls src={msg.mediaUrl} className="w-full" />
-                    ) : msg.mediaType === 'document' ? (
-                      <a
-                        href={msg.mediaUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 px-2 py-1 text-[11px] font-bold text-soft-blue underline break-all"
-                      >
-                        📎 {msg.mediaUrl}
-                      </a>
-                    ) : (
-                      <div className="flex flex-col gap-1">
-                        <img
-                          src={msg.mediaUrl}
-                          alt="Vista previa multimedia del nodo"
-                          className="max-h-36 w-full rounded-lg object-cover"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                          }}
-                        />
-                        <a
-                          href={msg.mediaUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="truncate px-1 text-[10px] font-semibold text-soft-blue underline"
-                        >
-                          {msg.mediaUrl}
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-
-                {msg.buttons && msg.buttons.length > 0 ? (
-                  <div className="mt-2 flex flex-col gap-1.5">
-                    {msg.buttons.map((btn) => (
-                      <button
-                        key={btn.id}
-                        type="button"
-                        onClick={() => void sendSimulatorInput(btn.label)}
-                        className="w-full rounded-lg border border-soft-blue/40 bg-soft-blue/10 px-2.5 py-1.5 text-left text-[11px] font-extrabold text-soft-blue hover:bg-soft-blue hover:text-white"
-                      >
-                        {btn.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-
-                {msg.listItems && msg.listItems.length > 0 ? (
-                  <div className="mt-2 flex flex-col gap-1.5">
-                    {msg.listItems.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => void sendSimulatorInput(item.title)}
-                        className="w-full rounded-lg border border-soft-line bg-soft-bg px-2.5 py-1.5 text-left text-[11px] hover:border-soft-blue"
-                      >
-                        <div className="font-extrabold text-soft-ink">
-                          {item.title}
-                        </div>
-                        {item.description ? (
-                          <div className="text-[10px] text-soft-muted">
-                            {item.description}
-                          </div>
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-              <span className="mt-0.5 text-[10px] text-soft-muted">
-                {msg.timestamp}
+                {latestHttpStep.httpDetails.statusCode ?? 'ERR'}
               </span>
-            </div>
-          ))}
-        </div>
-
-        {handoffBanner ? (
-          <div className="mt-2.5 rounded-xl border border-[#82d616]/40 bg-[#82d616]/15 p-2.5 text-[11px] font-bold text-soft-ink">
-            <strong>👨‍💼 Handoff a Chatwoot ejecutado:</strong> {handoffBanner}
-          </div>
-        ) : null}
-
-        <form onSubmit={handleFormSubmit} className="mt-2.5 flex gap-2">
-          <label htmlFor="sim-chat-input" className="sr-only">
-            Mensaje de prueba
-          </label>
-          <input
-            id="sim-chat-input"
-            name="simulatorMessage"
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Escribe aquí (ej: hola, 1020458912, 1)..."
-            className="min-w-0 flex-1 rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink focus:border-soft-blue focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={isSending}
-            aria-label="Enviar mensaje de prueba"
-            className="inline-flex min-h-[38px] min-w-[38px] shrink-0 items-center justify-center gap-1 rounded-xl bg-brand-gradient px-3.5 py-2 text-xs font-extrabold text-white shadow-brand-icon disabled:opacity-60"
-          >
-            <Send className="h-3.5 w-3.5" />
+            ) : null}
           </button>
-        </form>
+        </div>
       </div>
 
-      <div className="mt-4 border-t border-soft-line pt-3">
-        <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1 text-[11px] font-extrabold uppercase text-soft-blue">
-            <Sparkles className="h-3 w-3" />
-            <span>Variables de Sesión Capturadas</span>
-          </span>
-          {tags.length > 0 ? (
-            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#82d616]">
-              <Tag className="h-3 w-3" />
-              {tags.join(', ')}
-            </span>
-          ) : null}
-        </div>
+      <div
+        role="tabpanel"
+        aria-labelledby={simTabId}
+        hidden={activeTab !== 'simulator'}
+        tabIndex={activeTab === 'simulator' ? 0 : undefined}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        <div className="flex flex-col justify-between pt-3">
+          <div className="min-w-0">
+            <div className="flex h-52 flex-col gap-2.5 overflow-y-auto rounded-xl bg-soft-bg p-3">
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col ${
+                    msg.sender === 'user' ? 'items-end' : 'items-start'
+                  }`}
+                >
+                  <div
+                    className={`max-w-[90%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed ${
+                      msg.sender === 'user'
+                        ? 'bg-brand-gradient text-white shadow-brand-icon'
+                        : 'border border-soft-line bg-soft-card text-soft-ink'
+                    }`}
+                  >
+                    {msg.text ? <p className="whitespace-pre-wrap">{msg.text}</p> : null}
 
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {Object.entries(variables).map(([key, val]) => (
-            <span
-              key={key}
-              className="rounded-lg border border-soft-line bg-soft-bg px-2 py-1 text-[10px] font-semibold text-soft-ink"
-            >
-              <strong className="text-soft-blue">{`{{${key}}}`}:</strong> {val}
-            </span>
-          ))}
-        </div>
+                    {msg.mediaUrl ? (
+                      <div className="mt-2 overflow-hidden rounded-xl border border-soft-line bg-soft-bg p-1.5">
+                        {msg.mediaType === 'audio' ? (
+                          <audio controls src={msg.mediaUrl} className="w-full" />
+                        ) : msg.mediaType === 'document' ? (
+                          <a
+                            href={msg.mediaUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 break-all px-2 py-1 text-[11px] font-bold text-soft-blue underline"
+                          >
+                            📎 {msg.mediaUrl}
+                          </a>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            <img
+                              src={msg.mediaUrl}
+                              alt="Vista previa multimedia del nodo"
+                              className="max-h-36 w-full rounded-lg object-cover"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                              }}
+                            />
+                            <a
+                              href={msg.mediaUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="truncate px-1 text-[10px] font-semibold text-soft-blue underline"
+                            >
+                              {msg.mediaUrl}
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
 
-        {traceLogs.length > 0 ? (
-          <div className="mt-2.5 max-h-28 overflow-y-auto rounded-xl bg-soft-bg p-2 text-[10px]">
-            <div className="mb-1 font-extrabold uppercase text-soft-muted">
-              Trazabilidad de Nodos Ejecutados:
+                    {msg.buttons && msg.buttons.length > 0 ? (
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        {msg.buttons.map((btn) => (
+                          <button
+                            key={btn.id}
+                            type="button"
+                            onClick={() => void sendSimulatorInput(btn.label)}
+                            className="w-full rounded-lg border border-soft-blue/40 bg-soft-blue/10 px-2.5 py-1.5 text-left text-[11px] font-extrabold text-soft-blue hover:bg-soft-blue hover:text-white"
+                          >
+                            {btn.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {msg.listItems && msg.listItems.length > 0 ? (
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        {msg.listItems.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => void sendSimulatorInput(item.title)}
+                            className="w-full rounded-lg border border-soft-line bg-soft-bg px-2.5 py-1.5 text-left text-[11px] hover:border-soft-blue"
+                          >
+                            <div className="font-extrabold text-soft-ink">
+                              {item.title}
+                            </div>
+                            {item.description ? (
+                              <div className="text-[10px] text-soft-muted">
+                                {item.description}
+                              </div>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <span className="mt-0.5 text-[10px] text-soft-muted">
+                    {msg.timestamp}
+                  </span>
+                </div>
+              ))}
             </div>
-            {traceLogs.slice(0, 5).map((step, index) => (
-              <div
-                key={`${step.nodeId}-${index}`}
-                className="flex items-center gap-1.5 py-0.5 text-soft-ink"
-              >
-                <Play className="h-2.5 w-2.5 shrink-0 text-soft-blue" />
-                <strong>[{step.nodeType}]</strong>
-                <span className="truncate">{step.detail}</span>
+
+            {handoffBanner ? (
+              <div className="mt-2.5 rounded-xl border border-[#82d616]/40 bg-[#82d616]/15 p-2.5 text-[11px] font-bold text-soft-ink">
+                <strong>👨‍💼 Handoff a Chatwoot ejecutado:</strong> {handoffBanner}
               </div>
-            ))}
+            ) : null}
+
+            <form onSubmit={handleFormSubmit} className="mt-2.5 flex gap-2">
+              <label htmlFor="sim-chat-input" className="sr-only">
+                Mensaje de prueba
+              </label>
+              <input
+                id="sim-chat-input"
+                name="simulatorMessage"
+                type="text"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Escribe aquí (ej: hola, 1020458912, 1)..."
+                className="min-w-0 flex-1 rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink focus:border-soft-blue focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={isSending}
+                aria-label="Enviar mensaje de prueba"
+                className="inline-flex min-h-[38px] min-w-[38px] shrink-0 items-center justify-center gap-1 rounded-xl bg-brand-gradient px-3.5 py-2 text-xs font-extrabold text-white shadow-brand-icon disabled:opacity-60"
+              >
+                <Send className="h-3.5 w-3.5" />
+              </button>
+            </form>
           </div>
-        ) : null}
+
+          {latestHttpStep ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab('http')}
+              className="mt-2.5 flex w-full items-center justify-between gap-2 rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-left text-[11px] font-bold text-soft-ink hover:border-soft-blue"
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span
+                  className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-extrabold ${
+                    getHttpStatusBadgeInfo(
+                      latestHttpStep.httpDetails.statusCode,
+                      latestHttpStep.httpDetails.ok
+                    ).badgeClass
+                  }`}
+                >
+                  {
+                    getHttpStatusBadgeInfo(
+                      latestHttpStep.httpDetails.statusCode,
+                      latestHttpStep.httpDetails.ok
+                    ).label
+                  }
+                </span>
+                <span className="truncate font-mono text-[10px]">
+                  {latestHttpStep.httpDetails.method} {latestHttpStep.httpDetails.url}
+                </span>
+              </span>
+              <span className="shrink-0 text-[10px] font-extrabold text-soft-blue">
+                Ver envío y respuesta →
+              </span>
+            </button>
+          ) : null}
+
+          <div className="mt-3 border-t border-soft-line pt-3">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1 text-[11px] font-extrabold uppercase text-soft-blue">
+                <Sparkles className="h-3 w-3" />
+                <span>Variables de Sesión Capturadas</span>
+              </span>
+              {tags.length > 0 ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#82d616]">
+                  <Tag className="h-3 w-3" />
+                  {tags.join(', ')}
+                </span>
+              ) : null}
+            </div>
+
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {Object.entries(variables).map(([key, val]) => (
+                <span
+                  key={key}
+                  title={val}
+                  className="max-w-full break-all rounded-lg border border-soft-line bg-soft-bg px-2 py-1 text-[10px] font-semibold text-soft-ink"
+                >
+                  <strong className="text-soft-blue">{`{{${key}}}`}:</strong>{' '}
+                  {val.length > 120 ? `${val.slice(0, 120)}…` : val}
+                </span>
+              ))}
+            </div>
+
+            {traceLogs.length > 0 ? (
+              <div className="mt-2.5 max-h-36 overflow-y-auto rounded-xl bg-soft-bg p-2 text-[10px]">
+                <div className="mb-1 font-extrabold uppercase text-soft-muted">
+                  Trazabilidad de Nodos Ejecutados:
+                </div>
+                {traceLogs.slice(0, 12).map((step, index) => (
+                  <div
+                    key={`${step.nodeId}-${index}`}
+                    className="flex flex-wrap items-center justify-between gap-1.5 py-0.5 text-soft-ink"
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                      <Play className="h-2.5 w-2.5 shrink-0 text-soft-blue" />
+                      <strong className="shrink-0">[{step.nodeType}]</strong>
+                      {step.httpDetails ? (
+                        <span
+                          className={`shrink-0 rounded border px-1 py-0.5 text-[9px] font-extrabold ${
+                            getHttpStatusBadgeInfo(
+                              step.httpDetails.statusCode,
+                              step.httpDetails.ok
+                            ).badgeClass
+                          }`}
+                        >
+                          {step.httpDetails.statusCode ?? 'ERR'}
+                        </span>
+                      ) : null}
+                      <span className="truncate" title={step.detail}>
+                        {step.detail}
+                      </span>
+                    </div>
+                    {step.httpDetails ? (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('http')}
+                        className="shrink-0 text-[10px] font-extrabold text-soft-blue underline"
+                      >
+                        Ver HTTP
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div
+        role="tabpanel"
+        aria-labelledby={httpTabId}
+        hidden={activeTab !== 'http'}
+        tabIndex={activeTab === 'http' ? 0 : undefined}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        <div className="flex flex-col gap-3 pt-3">
+          {httpTraceSteps.length === 0 ? (
+            <div className="rounded-xl border border-soft-line bg-soft-bg p-4 text-center text-xs text-soft-muted">
+              <Globe className="mx-auto mb-2 h-6 w-6 text-soft-blue" />
+              <p className="font-bold text-soft-ink">
+                Aún no se han ejecutado nodos HTTP en esta sesión.
+              </p>
+              <p className="mt-1 text-[11px]">
+                Ejecuta el flujo en el Simulador o usa el botón de prueba directa dentro del nodo HTTP para ver código de estado, envío y respuesta.
+              </p>
+            </div>
+          ) : (
+            httpTraceSteps.map((step, index) => (
+              <HttpExecutionDetailsCard
+                key={`${step.nodeId}-${step.timestamp}-${index}`}
+                details={step.httpDetails}
+                title={step.title}
+                timestamp={step.timestamp}
+              />
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
