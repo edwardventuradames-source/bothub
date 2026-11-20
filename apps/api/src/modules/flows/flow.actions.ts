@@ -17,6 +17,8 @@ import {
 
 const ACTION_HTTP_TIMEOUT_MS = 8000;
 const AI_HTTP_TIMEOUT_MS = 20000;
+const AI_TRANSIENT_STATUS_CODES = new Set([502, 503, 504]);
+const AI_RETRY_DELAYS_MS = [700, 1400];
 const DEFAULT_MAX_OUTPUT_TOKENS = 512;
 const MIN_OUTPUT_TOKENS = 64;
 const MAX_OUTPUT_TOKENS = 4096;
@@ -555,6 +557,24 @@ function recordOrgAiUsage(
   }
 }
 
+async function fetchAiWithTransientRetry(
+  url: string,
+  init: RequestInit & { signal: AbortSignal }
+): Promise<Response> {
+  let response = await fetch(url, init);
+  for (const delayMs of AI_RETRY_DELAYS_MS) {
+    if (!AI_TRANSIENT_STATUS_CODES.has(response.status) || init.signal.aborted) {
+      return response;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (init.signal.aborted) {
+      return response;
+    }
+    response = await fetch(url, init);
+  }
+  return response;
+}
+
 export async function executeAiPromptNode(
   node: FlowNode,
   variables: Record<string, string>,
@@ -623,21 +643,24 @@ export async function executeAiPromptNode(
 
   try {
     if (provider === 'anthropic') {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: maxTokens,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userMessage }]
-        }),
-        signal: controller.signal
-      });
+      const response = await fetchAiWithTransientRetry(
+        'https://api.anthropic.com/v1/messages',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: maxTokens,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userMessage }]
+          }),
+          signal: controller.signal
+        }
+      );
 
       if (!response.ok) {
         return {
@@ -673,7 +696,7 @@ export async function executeAiPromptNode(
 
     if (provider === 'gemini') {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-      const response = await fetch(endpoint, {
+      const response = await fetchAiWithTransientRetry(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -731,22 +754,25 @@ export async function executeAiPromptNode(
       };
     }
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        max_tokens: maxTokens
-      }),
-      signal: controller.signal
-    });
+    const response = await fetchAiWithTransientRetry(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage }
+          ],
+          max_tokens: maxTokens
+        }),
+        signal: controller.signal
+      }
+    );
 
     if (!response.ok) {
       return {

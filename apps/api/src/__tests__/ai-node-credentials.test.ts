@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../app.js';
 import { provisionAdminAccountFromServer } from '../modules/auth/auth.service.js';
 
@@ -239,5 +239,87 @@ describe('AI Provider Credentials & AI_PROMPT Node Testing', () => {
       deleteRes.json() as { aiProviders: Array<{ provider: string; hasKey: boolean }> }
     ).aiProviders.find((p) => p.provider === 'openai');
     expect(afterDelete?.hasKey).toBe(false);
+  });
+
+  it('retries transient HTTP 503 responses on Gemini 3.8 Flash and succeeds on recovery', async () => {
+    const app = await buildApp();
+    await provisionAdminAccountFromServer({
+      email: 'ai-retry@bothub.test',
+      password: 'AiRetryPass2026!',
+      name: 'AI Retry Admin',
+      organizationName: 'AI Retry Org'
+    });
+    const loginRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'ai-retry@bothub.test', password: 'AiRetryPass2026!' }
+    });
+    const token = (loginRes.json() as { accessToken: string }).accessToken;
+
+    const flowRes = await app.inject({
+      method: 'POST',
+      url: '/api/flows',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Flujo Retry Gemini', description: 'Retry 503' }
+    });
+    const flowId = (flowRes.json() as { flow: { id: string } }).flow.id;
+
+    await app.inject({
+      method: 'PUT',
+      url: '/api/settings/ai-providers',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { provider: 'gemini', apiKey: 'AIzaSyRetryGeminiKey12345' }
+    });
+
+    const originalFetch = globalThis.fetch;
+    let attempts = 0;
+    vi.useFakeTimers();
+
+    try {
+      globalThis.fetch = (async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return new Response(
+            JSON.stringify({ error: { message: 'This model is currently experiencing high demand.' } }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'Respuesta recuperada con éxito' }] } }],
+            usageMetadata: { promptTokenCount: 15, candidatesTokenCount: 10, totalTokenCount: 25 }
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }) as typeof fetch;
+
+      const callPromise = app.inject({
+        method: 'POST',
+        url: `/api/flows/${flowId}/test-ai`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          node: {
+            id: 'ai-retry-1',
+            type: 'AI_PROMPT',
+            position: { x: 0, y: 0 },
+            data: { model: 'gemini-3.8-flash', systemPrompt: 'Responde breve' }
+          },
+          inputMessage: 'Hola'
+        }
+      });
+
+      await vi.advanceTimersByTimeAsync(1500);
+      const res = await callPromise;
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { ok: boolean; text: string; usage?: { totalTokens: number } };
+      expect(attempts).toBe(2);
+      expect(body.ok).toBe(true);
+      expect(body.text).toBe('Respuesta recuperada con éxito');
+      expect(body.usage?.totalTokens).toBe(25);
+    } finally {
+      vi.useRealTimers();
+      globalThis.fetch = originalFetch;
+    }
   });
 });
