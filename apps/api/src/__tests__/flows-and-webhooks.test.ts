@@ -891,4 +891,69 @@ describe('Server-Side Admin Provisioning, Flow Engine & Webhooks', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('downloads mediaUrl and uploads it to Chatwoot as multipart attachments[]', async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; contentType: string; bodyText: string }> = [];
+
+    try {
+      globalThis.fetch = (async (url, init) => {
+        const urlStr = String(url);
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        const rawBody = init?.body ? Buffer.from(init.body as Uint8Array).toString('utf8') : '';
+        requests.push({
+          url: urlStr,
+          contentType: headers['Content-Type'] ?? '',
+          bodyText: rawBody
+        });
+
+        if (urlStr.includes('cdn.bytemv.com/logo.png')) {
+          return new Response(Uint8Array.from([0x89, 0x50, 0x4e, 0x47]), {
+            status: 200,
+            headers: { 'Content-Type': 'image/png' }
+          });
+        }
+
+        return new Response(JSON.stringify({ id: 501 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }) as typeof fetch;
+
+      const res = await sendMessageToChatwootApi({
+        config: {
+          baseUrl: 'https://chat.bytemv.com',
+          accountId: 1,
+          inboxId: 1,
+          hasApiAccessToken: true,
+          maskedApiAccessToken: 'cw_•••',
+          webhookTokenPreview: 'wh_•••',
+          webhookEndpointPath: '/api/webhooks/chatwoot/bot-1',
+          handoffReturnCommand: '#bot',
+          isActive: true,
+          lastSyncedAt: null
+        },
+        apiAccessToken: 'token_test_cw',
+        conversationId: 88,
+        content: 'Bienvenido!\n\nhttps://cdn.bytemv.com/logo.png',
+        reply: {
+          id: 'r-media-1',
+          text: 'Bienvenido!',
+          mediaUrl: 'https://cdn.bytemv.com/logo.png',
+          mediaType: 'image'
+        }
+      });
+
+      expect(res.sent).toBe(true);
+      expect(requests).toHaveLength(2);
+      const cwReq = requests[1];
+      expect(cwReq.url).toContain('/conversations/88/messages');
+      expect(cwReq.contentType).toContain('multipart/form-data; boundary=');
+      expect(cwReq.bodyText).toContain('name="attachments[]"; filename="logo.png"');
+      expect(cwReq.bodyText).toContain('Content-Type: image/png');
+      expect(cwReq.bodyText).toContain('Bienvenido!');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

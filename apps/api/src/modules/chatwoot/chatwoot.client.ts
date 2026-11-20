@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   ChatwootConfigDto,
   ChatwootLabelDto,
@@ -10,6 +11,128 @@ import {
 } from '../../lib/ssrf-guard.js';
 
 const HTTP_TIMEOUT_MS = 8000;
+const MEDIA_DOWNLOAD_MAX_BYTES = 5 * 1024 * 1024;
+
+function inferAttachmentMetadata(
+  mediaUrl: string,
+  responseContentType?: string
+): { filename: string; mimeType: string } {
+  const cleanUrl = mediaUrl.split('?')[0];
+  const rawName = cleanUrl.split('/').pop()?.trim() || 'archivo';
+  const safeName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_') || 'archivo';
+  const lower = safeName.toLowerCase();
+  const headerMime = (responseContentType ?? '').split(';')[0].trim().toLowerCase();
+
+  if (headerMime && headerMime !== 'application/octet-stream') {
+    return { filename: safeName, mimeType: headerMime };
+  }
+  if (lower.endsWith('.png')) return { filename: safeName, mimeType: 'image/png' };
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+    return { filename: safeName, mimeType: 'image/jpeg' };
+  }
+  if (lower.endsWith('.webp')) return { filename: safeName, mimeType: 'image/webp' };
+  if (lower.endsWith('.gif')) return { filename: safeName, mimeType: 'image/gif' };
+  if (lower.endsWith('.pdf')) return { filename: safeName, mimeType: 'application/pdf' };
+  if (lower.endsWith('.mp3')) return { filename: safeName, mimeType: 'audio/mpeg' };
+  if (lower.endsWith('.ogg')) return { filename: safeName, mimeType: 'audio/ogg' };
+  if (lower.endsWith('.mp4')) return { filename: safeName, mimeType: 'video/mp4' };
+  return { filename: safeName, mimeType: 'application/octet-stream' };
+}
+
+function buildChatwootMultipartPayload(params: {
+  content: string;
+  messageType: 'incoming' | 'outgoing';
+  isPrivate: boolean;
+  filename: string;
+  mimeType: string;
+  fileBuffer: Buffer;
+}): { boundary: string; body: Buffer } {
+  const boundary = `----BotHubMediaBoundary${crypto.randomUUID().replace(/-/g, '')}`;
+  const chunks: Buffer[] = [];
+
+  const appendField = (name: string, value: string) => {
+    chunks.push(
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+        'utf8'
+      )
+    );
+  };
+
+  if (params.content) {
+    appendField('content', params.content);
+  }
+  appendField('message_type', params.messageType);
+  appendField('private', String(params.isPrivate));
+
+  chunks.push(
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="attachments[]"; filename="${params.filename}"\r\nContent-Type: ${params.mimeType}\r\n\r\n`,
+      'utf8'
+    )
+  );
+  chunks.push(params.fileBuffer);
+  chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8'));
+
+  return { boundary, body: Buffer.concat(chunks) };
+}
+
+async function trySendAttachmentToChatwoot(params: {
+  endpoint: string;
+  apiAccessToken: string;
+  content: string;
+  isPrivate: boolean;
+  messageType: 'incoming' | 'outgoing';
+  mediaUrl: string;
+}): Promise<ChatwootApiCallResult | null> {
+  if (!/^https?:\/\/.+/i.test(params.mediaUrl) || !shouldCallRemoteChatwoot(params.mediaUrl)) {
+    return null;
+  }
+
+  try {
+    const mediaResponse = await pinnedSafeFetch(params.mediaUrl, {
+      method: 'GET',
+      timeoutMs: HTTP_TIMEOUT_MS,
+      maxBytes: MEDIA_DOWNLOAD_MAX_BYTES
+    });
+
+    if (!mediaResponse.ok || mediaResponse.buffer.byteLength === 0) {
+      return null;
+    }
+
+    const { filename, mimeType } = inferAttachmentMetadata(
+      params.mediaUrl,
+      mediaResponse.headers['content-type']
+    );
+
+    const { boundary, body } = buildChatwootMultipartPayload({
+      content: params.content,
+      messageType: params.messageType,
+      isPrivate: params.isPrivate,
+      filename,
+      mimeType,
+      fileBuffer: mediaResponse.buffer
+    });
+
+    const uploadRes = await pinnedSafeFetch(params.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        api_access_token: params.apiAccessToken
+      },
+      body,
+      timeoutMs: 12000
+    });
+
+    if (!uploadRes.ok) {
+      return null;
+    }
+
+    return { sent: true, status: uploadRes.status };
+  } catch {
+    return null;
+  }
+}
 
 export function shouldCallRemoteChatwoot(
   baseUrl: string,
@@ -175,6 +298,21 @@ export async function sendMessageToChatwootApi(params: {
   const endpoint = `${params.config.baseUrl}/api/v1/accounts/${params.config.accountId}/conversations/${params.conversationId}/messages`;
 
   try {
+    if (!params.isPrivate && params.reply?.mediaUrl) {
+      const cleanCaption = params.reply.text.trim();
+      const attachmentRes = await trySendAttachmentToChatwoot({
+        endpoint,
+        apiAccessToken: params.apiAccessToken,
+        content: cleanCaption,
+        isPrivate: Boolean(params.isPrivate),
+        messageType: params.messageType ?? 'outgoing',
+        mediaUrl: params.reply.mediaUrl
+      });
+      if (attachmentRes) {
+        return attachmentRes;
+      }
+    }
+
     const firstPayload = buildChatwootMessageBody({
       content: trimmedContent,
       isPrivate: params.isPrivate,

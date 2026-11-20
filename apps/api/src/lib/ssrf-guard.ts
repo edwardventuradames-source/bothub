@@ -236,11 +236,17 @@ export async function pinnedSafeFetch(
   options: {
     method?: string;
     headers?: Record<string, string>;
-    body?: string;
+    body?: string | Buffer;
     timeoutMs: number;
     maxBytes?: number;
   }
-): Promise<{ status: number; ok: boolean; headers: Record<string, string>; text: string }> {
+): Promise<{
+  status: number;
+  ok: boolean;
+  headers: Record<string, string>;
+  text: string;
+  buffer: Buffer;
+}> {
   const isMockedFetch = globalThis.fetch !== INITIAL_NATIVE_FETCH;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
 
@@ -249,19 +255,27 @@ export async function pinnedSafeFetch(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs);
     try {
+      const fetchBody = Buffer.isBuffer(options.body)
+        ? new Uint8Array(options.body)
+        : options.body;
       const response = await fetch(validated.url.toString(), {
         method: options.method ?? 'GET',
         headers: options.headers,
         redirect: 'manual',
-        body: options.body,
+        body: fetchBody,
         signal: controller.signal
       });
-      const text = (await response.text()).slice(0, maxBytes);
+      const rawBuf =
+        typeof response.arrayBuffer === 'function'
+          ? Buffer.from(await response.arrayBuffer()).subarray(0, maxBytes)
+          : Buffer.from(await response.text(), 'utf8').subarray(0, maxBytes);
+      const text = rawBuf.toString('utf8');
       return {
         status: response.status,
         ok: response.ok,
         headers: Object.fromEntries(response.headers.entries()),
-        text
+        text,
+        buffer: rawBuf
       };
     } finally {
       clearTimeout(timer);
@@ -348,7 +362,8 @@ export async function pinnedSafeFetch(
             status,
             ok: status >= 200 && status < 300,
             headers: normalizedHeaders,
-            text: decodedBuffer.toString('utf8')
+            text: decodedBuffer.toString('utf8'),
+            buffer: decodedBuffer
           });
         };
 

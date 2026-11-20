@@ -183,6 +183,11 @@ export function FlowNodeInspector({
                             }}
                           />
                         )}
+                        {/\.webp(\?|$)/i.test(selectedNode.data.mediaUrl.trim()) ? (
+                          <p className="mt-1.5 text-[10px] font-semibold text-soft-warning">
+                            ⚠️ WhatsApp oficial solo acepta imágenes .png o .jpg como foto; .webp puede no mostrarse en el celular.
+                          </p>
+                        ) : null}
                       </>
                     ) : (
                       <p className="text-[11px] font-semibold text-soft-muted">
