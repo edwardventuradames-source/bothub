@@ -1,6 +1,7 @@
 import {
   AiProviderConfigDto,
   AiProviderId,
+  AiTokenBudgetDto,
   ApiKeyDto,
   AuthSessionResponse,
   BotDto,
@@ -29,6 +30,7 @@ import {
   TestFlowAiNodeResponse,
   TestFlowHttpNodeInput,
   TestFlowHttpNodeResponse,
+  UpdateAiTokenBudgetInput,
   UpdateBotInput,
   UpdateFlowInput,
   UpdateUserInput,
@@ -330,22 +332,33 @@ export const platformApi = {
       apiKeys: ApiKeyDto[];
       outboundWebhooks: OutboundWebhookConfigDto[];
       aiProviders?: AiProviderConfigDto[];
+      aiTokenBudget?: AiTokenBudgetDto;
     }>('/settings/overview'),
   getAiProviders: () =>
-    performRequest<{ aiProviders: AiProviderConfigDto[] }>('/settings/ai-providers'),
+    performRequest<{
+      aiProviders: AiProviderConfigDto[];
+      aiTokenBudget: AiTokenBudgetDto;
+    }>('/settings/ai-providers'),
   saveAiProviderKey: (input: UpsertAiProviderKeyInput) =>
     performRequest<{
       provider: AiProviderConfigDto;
       aiProviders: AiProviderConfigDto[];
+      aiTokenBudget: AiTokenBudgetDto;
     }>('/settings/ai-providers', {
       method: 'PUT',
       body: JSON.stringify(input)
     }),
   deleteAiProviderKey: (provider: AiProviderId) =>
-    performRequest<{ success: boolean; aiProviders: AiProviderConfigDto[] }>(
-      `/settings/ai-providers/${provider}`,
-      { method: 'DELETE' }
-    ),
+    performRequest<{
+      success: boolean;
+      aiProviders: AiProviderConfigDto[];
+      aiTokenBudget: AiTokenBudgetDto;
+    }>(`/settings/ai-providers/${provider}`, { method: 'DELETE' }),
+  saveAiTokenBudget: (input: UpdateAiTokenBudgetInput) =>
+    performRequest<{ aiTokenBudget: AiTokenBudgetDto }>('/settings/ai-budget', {
+      method: 'PUT',
+      body: JSON.stringify(input)
+    }),
   createApiKey: (name: string, scopes: string[]) =>
     performRequest<{ apiKey: ApiKeyDto }>('/settings/api-keys', {
       method: 'POST',

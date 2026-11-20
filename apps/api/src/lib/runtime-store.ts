@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   AiProviderConfigDto,
   AiProviderId,
+  AiTokenBudgetDto,
   ApiKeyDto,
   BotDto,
   BotLogDto,
@@ -77,6 +78,18 @@ export interface StoredAiCredentialRecord {
   updatedAt: string;
 }
 
+export interface StoredAiTokenBudgetRecord {
+  organizationId: string;
+  monthlyLimit: number;
+  tokensUsed: number;
+  periodKey: string;
+  updatedAt: string;
+}
+
+function getCurrentBillingPeriodKey(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+
 const AI_PROVIDER_LABELS: Record<AiProviderId, string> = {
   openai: 'OpenAI (GPT-4o)',
   anthropic: 'Anthropic (Claude)',
@@ -112,6 +125,7 @@ class RuntimeStore {
   public apiKeys: StoredApiKeyRecord[] = [];
   public outboundWebhooks: StoredOutboundWebhookRecord[] = [];
   public aiCredentials = new Map<string, StoredAiCredentialRecord>();
+  public aiTokenBudgets = new Map<string, StoredAiTokenBudgetRecord>();
   private logPersistenceHandler:
     | ((organizationId: string, entry: BotLogDto) => void)
     | null = null;
@@ -147,6 +161,7 @@ class RuntimeStore {
         apiKeys?: StoredApiKeyRecord[];
         outboundWebhooks?: StoredOutboundWebhookRecord[];
         aiCredentials?: Array<[string, StoredAiCredentialRecord]>;
+        aiTokenBudgets?: Array<[string, StoredAiTokenBudgetRecord]>;
       };
 
       if (Array.isArray(parsed.bots)) this.bots = parsed.bots;
@@ -180,6 +195,9 @@ class RuntimeStore {
       if (Array.isArray(parsed.aiCredentials)) {
         this.aiCredentials = new Map(parsed.aiCredentials);
       }
+      if (Array.isArray(parsed.aiTokenBudgets)) {
+        this.aiTokenBudgets = new Map(parsed.aiTokenBudgets);
+      }
     } catch {
       void 0;
     }
@@ -203,7 +221,8 @@ class RuntimeStore {
         logs: this.logs,
         apiKeys: this.apiKeys,
         outboundWebhooks: this.outboundWebhooks,
-        aiCredentials: Array.from(this.aiCredentials.entries())
+        aiCredentials: Array.from(this.aiCredentials.entries()),
+        aiTokenBudgets: Array.from(this.aiTokenBudgets.entries())
       };
       fs.writeFileSync(
         RUNTIME_STATE_FILE,
@@ -615,6 +634,82 @@ class RuntimeStore {
     return providers.map((provider) =>
       this.getAiCredentialStatus(organizationId, provider)
     );
+  }
+
+  public getAiTokenBudget(organizationId: string): AiTokenBudgetDto {
+    const currentPeriod = getCurrentBillingPeriodKey();
+    const stored = this.aiTokenBudgets.get(organizationId);
+    const monthlyLimit = stored ? Math.max(0, stored.monthlyLimit) : 0;
+    const tokensUsed =
+      stored && stored.periodKey === currentPeriod ? Math.max(0, stored.tokensUsed) : 0;
+    return {
+      monthlyLimit,
+      tokensUsed,
+      periodKey: currentPeriod,
+      remainingTokens:
+        monthlyLimit > 0 ? Math.max(0, monthlyLimit - tokensUsed) : null,
+      updatedAt: stored?.updatedAt ?? null
+    };
+  }
+
+  public updateAiTokenBudget(
+    organizationId: string,
+    input: { monthlyLimit: number; resetUsage?: boolean }
+  ): StoredAiTokenBudgetRecord {
+    const currentPeriod = getCurrentBillingPeriodKey();
+    const existing = this.aiTokenBudgets.get(organizationId);
+    const currentUsed =
+      !input.resetUsage && existing && existing.periodKey === currentPeriod
+        ? Math.max(0, existing.tokensUsed)
+        : 0;
+    const nextRecord: StoredAiTokenBudgetRecord = {
+      organizationId,
+      monthlyLimit: Math.max(0, Math.floor(input.monthlyLimit)),
+      tokensUsed: currentUsed,
+      periodKey: currentPeriod,
+      updatedAt: new Date().toISOString()
+    };
+    this.aiTokenBudgets.set(organizationId, nextRecord);
+    this.persistStateToDisk();
+    return nextRecord;
+  }
+
+  public isAiTokenBudgetExceeded(
+    organizationId: string | undefined
+  ): { exceeded: boolean; budget: AiTokenBudgetDto | null } {
+    if (!organizationId) {
+      return { exceeded: false, budget: null };
+    }
+    const budget = this.getAiTokenBudget(organizationId);
+    if (budget.monthlyLimit <= 0) {
+      return { exceeded: false, budget };
+    }
+    return { exceeded: budget.tokensUsed >= budget.monthlyLimit, budget };
+  }
+
+  public recordAiTokenUsage(
+    organizationId: string | undefined,
+    tokensDelta: number
+  ): StoredAiTokenBudgetRecord | null {
+    if (!organizationId || !Number.isFinite(tokensDelta) || tokensDelta <= 0) {
+      return null;
+    }
+    const currentPeriod = getCurrentBillingPeriodKey();
+    const existing = this.aiTokenBudgets.get(organizationId);
+    const baseUsed =
+      existing && existing.periodKey === currentPeriod
+        ? Math.max(0, existing.tokensUsed)
+        : 0;
+    const nextRecord: StoredAiTokenBudgetRecord = {
+      organizationId,
+      monthlyLimit: existing ? Math.max(0, existing.monthlyLimit) : 0,
+      tokensUsed: baseUsed + Math.round(tokensDelta),
+      periodKey: currentPeriod,
+      updatedAt: new Date().toISOString()
+    };
+    this.aiTokenBudgets.set(organizationId, nextRecord);
+    this.persistStateToDisk();
+    return nextRecord;
   }
 
   public syncBotLiveCounters(organizationId?: string): void {

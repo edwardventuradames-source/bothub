@@ -131,6 +131,12 @@ export const TestFlowAiNodeInputSchema = z.object({
 });
 export type TestFlowAiNodeInput = z.input<typeof TestFlowAiNodeInputSchema>;
 
+export interface AiTokenUsageDto {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface TestFlowAiNodeResponse {
   ok: boolean;
   provider: AiProviderId;
@@ -139,6 +145,7 @@ export interface TestFlowAiNodeResponse {
   errorMessage: string | null;
   latencyMs: number;
   keySource: 'organization' | 'env' | 'none';
+  usage?: AiTokenUsageDto | null;
 }
 
 export interface FlowExecutionStepLog {

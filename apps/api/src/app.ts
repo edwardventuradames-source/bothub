@@ -9,6 +9,7 @@ import { registerSwaggerPlugin } from './plugins/swagger.js';
 import { registerAuthRoutes } from './modules/auth/auth.routes.js';
 import { registerBotsRoutes } from './modules/bots/bots.routes.js';
 import { registerFlowsRoutes } from './modules/flows/flows.routes.js';
+import { registerAiSettingsRoutes } from './modules/platform/ai-settings.routes.js';
 import { registerPlatformRoutes } from './modules/platform/platform.routes.js';
 
 declare module 'fastify' {
@@ -147,6 +148,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(registerAuthRoutes, { prefix: '/api/auth' });
   await app.register(registerBotsRoutes, { prefix: '/api/bots' });
   await app.register(registerFlowsRoutes, { prefix: '/api/flows' });
+  await app.register(registerAiSettingsRoutes, { prefix: '/api' });
   await app.register(registerPlatformRoutes, { prefix: '/api' });
 
   return app;

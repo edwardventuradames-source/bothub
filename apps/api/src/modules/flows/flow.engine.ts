@@ -475,15 +475,22 @@ export async function executeFlowSimulationStep(
 
         if (aiResult.ok) {
           variables[saveVar] = aiResult.text;
+          if (aiResult.usage && aiResult.usage.totalTokens > 0) {
+            variables[`${saveVar}_tokens`] = String(aiResult.usage.totalTokens);
+          }
           delete variables[`${saveVar}_error`];
           enqueueReply({
             text: aiResult.text
           });
+          const tokenSuffix =
+            aiResult.usage && aiResult.usage.totalTokens > 0
+              ? ` (${aiResult.usage.totalTokens} tokens)`
+              : '';
           trace.push({
             nodeId: activeNode.id,
             nodeType: 'AI_PROMPT',
             title: nodeTitle,
-            detail: `Respuesta generada con ${aiResult.model} -> {{${saveVar}}}`,
+            detail: `Respuesta generada con ${aiResult.model} -> {{${saveVar}}}${tokenSuffix}`,
             timestamp: new Date().toISOString()
           });
         } else {

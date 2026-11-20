@@ -7,6 +7,7 @@ import { prisma } from './prisma.js';
 import { logger } from './logger.js';
 import type {
   StoredAiCredentialRecord,
+  StoredAiTokenBudgetRecord,
   StoredApiKeyRecord,
   StoredOutboundWebhookRecord
 } from './runtime-store.js';
@@ -348,6 +349,43 @@ export async function deleteAiCredentialFromDb(
     logger.warn(
       { organizationId, provider, err },
       'Failed deleting AI credential from PostgreSQL'
+    );
+  }
+}
+
+export async function syncAiTokenBudgetToDb(
+  record: StoredAiTokenBudgetRecord,
+  forceDb = false
+): Promise<void> {
+  if (!isPlatformDbEnabled(forceDb)) {
+    return;
+  }
+  try {
+    const orgExists = await prisma.organization.findUnique({
+      where: { id: record.organizationId },
+      select: { id: true }
+    });
+    if (!orgExists) {
+      return;
+    }
+    await prisma.aiTokenBudget.upsert({
+      where: { organizationId: record.organizationId },
+      update: {
+        monthlyLimit: record.monthlyLimit,
+        tokensUsed: record.tokensUsed,
+        periodKey: record.periodKey
+      },
+      create: {
+        organizationId: record.organizationId,
+        monthlyLimit: record.monthlyLimit,
+        tokensUsed: record.tokensUsed,
+        periodKey: record.periodKey
+      }
+    });
+  } catch (err) {
+    logger.warn(
+      { organizationId: record.organizationId, err },
+      'Failed syncing AI token budget to PostgreSQL'
     );
   }
 }

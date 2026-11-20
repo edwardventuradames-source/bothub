@@ -30,6 +30,7 @@ import {
   isPlatformDbEnabled,
   mapDbMessageToDto,
   syncAiCredentialToDb,
+  syncAiTokenBudgetToDb,
   syncApiKeyToDb,
   syncConversationMessagesToDb,
   syncLogToDb,
@@ -43,6 +44,7 @@ export {
   deleteOutboundWebhookFromDb,
   mapDbMessageToDto,
   syncAiCredentialToDb,
+  syncAiTokenBudgetToDb,
   syncApiKeyToDb,
   syncConversationMessagesToDb,
   syncFlowToDb,
@@ -51,6 +53,7 @@ export {
 };
 import {
   StoredAiCredentialRecord,
+  StoredAiTokenBudgetRecord,
   StoredApiKeyRecord,
   StoredChatwootSecrets,
   StoredCloudApiSecrets,
@@ -133,6 +136,7 @@ export async function hydrateStoreFromDatabase(
     apiKeys: StoredApiKeyRecord[];
     outboundWebhooks: StoredOutboundWebhookRecord[];
     aiCredentials?: Map<string, StoredAiCredentialRecord>;
+    aiTokenBudgets?: Map<string, StoredAiTokenBudgetRecord>;
   },
   options: { forceDb?: boolean } = {}
 ): Promise<boolean> {
@@ -485,6 +489,19 @@ export async function hydrateStoreFromDatabase(
             updatedAt: cred.updatedAt.toISOString()
           });
         }
+      }
+    }
+
+    if (target.aiTokenBudgets) {
+      const dbBudgets = await prisma.aiTokenBudget.findMany();
+      for (const b of dbBudgets) {
+        target.aiTokenBudgets.set(b.organizationId, {
+          organizationId: b.organizationId,
+          monthlyLimit: b.monthlyLimit,
+          tokensUsed: b.tokensUsed,
+          periodKey: b.periodKey,
+          updatedAt: b.updatedAt.toISOString()
+        });
       }
     }
 

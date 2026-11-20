@@ -176,3 +176,17 @@ export interface AiProviderConfigDto {
   source: 'organization' | 'env' | 'none';
   updatedAt: string | null;
 }
+
+export const UpdateAiTokenBudgetInputSchema = z.object({
+  monthlyLimit: z.number().int().min(0).max(100_000_000),
+  resetUsage: z.boolean().optional()
+});
+export type UpdateAiTokenBudgetInput = z.infer<typeof UpdateAiTokenBudgetInputSchema>;
+
+export interface AiTokenBudgetDto {
+  monthlyLimit: number;
+  tokensUsed: number;
+  periodKey: string;
+  remainingTokens: number | null;
+  updatedAt: string | null;
+}

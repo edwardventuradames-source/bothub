@@ -458,6 +458,45 @@ export function FlowActionNodesInspector({
           </select>
         </div>
         <div>
+          <label htmlFor="ai-max-tokens" className="mb-1 block text-xs font-bold text-soft-ink">
+            Máximo de Tokens por Respuesta (64 - 4096)
+          </label>
+          <div className="flex flex-col gap-1.5">
+            <input
+              id="ai-max-tokens"
+              type="number"
+              min={64}
+              max={4096}
+              step={64}
+              value={Number(selectedNode.data.maxTokens ?? 512)}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                onUpdateData('maxTokens', Number.isFinite(val) ? val : 512);
+              }}
+              className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {[256, 512, 1024, 2048].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => onUpdateData('maxTokens', preset)}
+                  className={`rounded-lg border px-2 py-0.5 text-[10px] font-bold ${
+                    Number(selectedNode.data.maxTokens ?? 512) === preset
+                      ? 'border-soft-blue bg-soft-blue/10 text-soft-blue'
+                      : 'border-soft-line bg-soft-bg text-soft-muted hover:text-soft-ink'
+                  }`}
+                >
+                  {preset} tokens
+                </button>
+              ))}
+            </div>
+            <span className="text-[10px] text-soft-muted">
+              Limita qué tan larga puede ser cada respuesta (~1 token ≈ 4 caracteres en español).
+            </span>
+          </div>
+        </div>
+        <div>
           <label htmlFor="ai-save-var" className="mb-1 block text-xs font-bold text-soft-ink">
             Guardar Respuesta en Variable
           </label>
@@ -527,6 +566,15 @@ export function FlowActionNodesInspector({
                 <p className="mt-1 whitespace-pre-wrap">
                   {aiTestResult.ok ? aiTestResult.text : aiTestResult.errorMessage}
                 </p>
+                {aiTestResult.usage ? (
+                  <div className="mt-1.5 border-t border-soft-line/60 pt-1 font-mono text-[10px] text-soft-muted">
+                    Tokens: {aiTestResult.usage.promptTokens} entrada +{' '}
+                    {aiTestResult.usage.completionTokens} salida ={' '}
+                    <strong className="text-soft-ink">
+                      {aiTestResult.usage.totalTokens} total
+                    </strong>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

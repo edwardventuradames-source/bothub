@@ -1,4 +1,10 @@
-import { AiProviderId, FlowHttpExecutionLog, FlowNode } from '@bothub/shared';
+import {
+  AiProviderId,
+  AiTokenUsageDto,
+  FlowHttpExecutionLog,
+  FlowNode
+} from '@bothub/shared';
+import { syncAiTokenBudgetToDb } from '../../lib/persistence.js';
 import { runtimeStore } from '../../lib/runtime-store.js';
 import {
   pinnedSafeFetch,
@@ -11,6 +17,9 @@ import {
 
 const ACTION_HTTP_TIMEOUT_MS = 8000;
 const AI_HTTP_TIMEOUT_MS = 20000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 512;
+const MIN_OUTPUT_TOKENS = 64;
+const MAX_OUTPUT_TOKENS = 4096;
 const MAX_RESPONSE_PREVIEW_CHARS = 1200;
 const MAX_RESPONSE_LOG_CHARS = 4000;
 const MAX_RESPONSE_BYTES = 262144;
@@ -494,6 +503,50 @@ async function extractAiHttpErrorMessage(
   return `${providerLabel} API HTTP ${response.status}`;
 }
 
+export function resolveMaxOutputTokens(rawValue: unknown): number {
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return DEFAULT_MAX_OUTPUT_TOKENS;
+  }
+  return Math.min(Math.max(Math.round(numeric), MIN_OUTPUT_TOKENS), MAX_OUTPUT_TOKENS);
+}
+
+function normalizeTokenUsage(
+  promptRaw: unknown,
+  completionRaw: unknown,
+  totalRaw?: unknown
+): AiTokenUsageDto | null {
+  const promptTokens =
+    typeof promptRaw === 'number' && Number.isFinite(promptRaw) && promptRaw >= 0
+      ? Math.round(promptRaw)
+      : 0;
+  const completionTokens =
+    typeof completionRaw === 'number' && Number.isFinite(completionRaw) && completionRaw >= 0
+      ? Math.round(completionRaw)
+      : 0;
+  const totalTokens =
+    typeof totalRaw === 'number' && Number.isFinite(totalRaw) && totalRaw > 0
+      ? Math.round(totalRaw)
+      : promptTokens + completionTokens;
+  if (totalTokens <= 0 && promptTokens <= 0 && completionTokens <= 0) {
+    return null;
+  }
+  return { promptTokens, completionTokens, totalTokens };
+}
+
+function recordOrgAiUsage(
+  organizationId: string | undefined,
+  usage: AiTokenUsageDto | null
+): void {
+  if (!organizationId || !usage || usage.totalTokens <= 0) {
+    return;
+  }
+  const updated = runtimeStore.recordAiTokenUsage(organizationId, usage.totalTokens);
+  if (updated) {
+    void syncAiTokenBudgetToDb(updated);
+  }
+}
+
 export async function executeAiPromptNode(
   node: FlowNode,
   variables: Record<string, string>,
@@ -507,10 +560,12 @@ export async function executeAiPromptNode(
   errorMessage: string | null;
   latencyMs: number;
   keySource: 'organization' | 'env' | 'none';
+  usage: AiTokenUsageDto | null;
 }> {
   const startedAt = Date.now();
   const model = String(node.data.model ?? 'gpt-4o-mini').trim() || 'gpt-4o-mini';
   const provider = resolveAiProviderFromModel(model);
+  const maxTokens = resolveMaxOutputTokens(node.data.maxTokens);
   const rawSystemPrompt = String(
     node.data.systemPrompt ?? 'Eres un asistente útil y amable.'
   );
@@ -535,7 +590,22 @@ export async function executeAiPromptNode(
       text: '',
       errorMessage: buildMissingAiKeyMessage(provider),
       latencyMs: Date.now() - startedAt,
-      keySource
+      keySource,
+      usage: null
+    };
+  }
+
+  const budgetCheck = runtimeStore.isAiTokenBudgetExceeded(organizationId);
+  if (budgetCheck.exceeded && budgetCheck.budget) {
+    return {
+      ok: false,
+      provider,
+      model,
+      text: '',
+      errorMessage: `Límite mensual de tokens IA alcanzado (${budgetCheck.budget.tokensUsed}/${budgetCheck.budget.monthlyLimit}). Ajusta el presupuesto en Configuración.`,
+      latencyMs: Date.now() - startedAt,
+      keySource,
+      usage: null
     };
   }
 
@@ -553,7 +623,7 @@ export async function executeAiPromptNode(
         },
         body: JSON.stringify({
           model,
-          max_tokens: 512,
+          max_tokens: maxTokens,
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }]
         }),
@@ -568,14 +638,18 @@ export async function executeAiPromptNode(
           text: '',
           errorMessage: await extractAiHttpErrorMessage('Anthropic', response),
           latencyMs: Date.now() - startedAt,
-          keySource
+          keySource,
+          usage: null
         };
       }
 
       const data = (await response.json()) as {
         content?: Array<{ type?: string; text?: string }>;
+        usage?: { input_tokens?: number; output_tokens?: number };
       };
       const text = data.content?.find((c) => c.type === 'text')?.text?.trim() ?? '';
+      const usage = normalizeTokenUsage(data.usage?.input_tokens, data.usage?.output_tokens);
+      recordOrgAiUsage(organizationId, usage);
       return {
         ok: text.length > 0,
         provider,
@@ -583,7 +657,8 @@ export async function executeAiPromptNode(
         text,
         errorMessage: text ? null : 'Respuesta vacía de Anthropic',
         latencyMs: Date.now() - startedAt,
-        keySource
+        keySource,
+        usage
       };
     }
 
@@ -597,7 +672,8 @@ export async function executeAiPromptNode(
         },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: 'user', parts: [{ text: userMessage }] }]
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          generationConfig: { maxOutputTokens: maxTokens }
         }),
         signal: controller.signal
       });
@@ -610,18 +686,30 @@ export async function executeAiPromptNode(
           text: '',
           errorMessage: await extractAiHttpErrorMessage('Gemini', response),
           latencyMs: Date.now() - startedAt,
-          keySource
+          keySource,
+          usage: null
         };
       }
 
       const data = (await response.json()) as {
         candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        usageMetadata?: {
+          promptTokenCount?: number;
+          candidatesTokenCount?: number;
+          totalTokenCount?: number;
+        };
       };
       const text =
         data.candidates?.[0]?.content?.parts
           ?.map((p) => p.text ?? '')
           .join('')
           .trim() ?? '';
+      const usage = normalizeTokenUsage(
+        data.usageMetadata?.promptTokenCount,
+        data.usageMetadata?.candidatesTokenCount,
+        data.usageMetadata?.totalTokenCount
+      );
+      recordOrgAiUsage(organizationId, usage);
       return {
         ok: text.length > 0,
         provider,
@@ -629,7 +717,8 @@ export async function executeAiPromptNode(
         text,
         errorMessage: text ? null : 'Respuesta vacía de Gemini',
         latencyMs: Date.now() - startedAt,
-        keySource
+        keySource,
+        usage
       };
     }
 
@@ -645,7 +734,7 @@ export async function executeAiPromptNode(
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_tokens: 512
+        max_tokens: maxTokens
       }),
       signal: controller.signal
     });
@@ -658,14 +747,26 @@ export async function executeAiPromptNode(
         text: '',
         errorMessage: await extractAiHttpErrorMessage('OpenAI', response),
         latencyMs: Date.now() - startedAt,
-        keySource
+        keySource,
+        usage: null
       };
     }
 
     const data = (await response.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      };
     };
     const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+    const usage = normalizeTokenUsage(
+      data.usage?.prompt_tokens,
+      data.usage?.completion_tokens,
+      data.usage?.total_tokens
+    );
+    recordOrgAiUsage(organizationId, usage);
     return {
       ok: text.length > 0,
       provider,
@@ -673,7 +774,8 @@ export async function executeAiPromptNode(
       text,
       errorMessage: text ? null : 'Respuesta vacía de OpenAI',
       latencyMs: Date.now() - startedAt,
-      keySource
+      keySource,
+      usage
     };
   } catch (err) {
     return {
@@ -683,7 +785,8 @@ export async function executeAiPromptNode(
       text: '',
       errorMessage: err instanceof Error ? err.message : 'Error consultando proveedor IA',
       latencyMs: Date.now() - startedAt,
-      keySource
+      keySource,
+      usage: null
     };
   } finally {
     clearTimeout(timer);

@@ -3,6 +3,7 @@ import { Bot, KeyRound, Lock, Palette, Plus, Trash2, Webhook } from 'lucide-reac
 import {
   AiProviderConfigDto,
   AiProviderId,
+  AiTokenBudgetDto,
   ApiKeyDto,
   OutboundWebhookConfigDto
 } from '@bothub/shared';
@@ -21,6 +22,9 @@ export function SettingsPage() {
   const [apiKeys, setApiKeys] = useState<ApiKeyDto[]>([]);
   const [webhooks, setWebhooks] = useState<OutboundWebhookConfigDto[]>([]);
   const [aiProviders, setAiProviders] = useState<AiProviderConfigDto[]>([]);
+  const [aiTokenBudget, setAiTokenBudget] = useState<AiTokenBudgetDto | null>(null);
+  const [aiMonthlyLimitInput, setAiMonthlyLimitInput] = useState('0');
+  const [isSavingBudget, setIsSavingBudget] = useState(false);
   const [aiKeyInputs, setAiKeyInputs] = useState<Record<AiProviderId, string>>({
     openai: '',
     gemini: '',
@@ -50,6 +54,10 @@ export function SettingsPage() {
         setApiKeys(res.apiKeys);
         setWebhooks(res.outboundWebhooks);
         setAiProviders(res.aiProviders ?? []);
+        if (res.aiTokenBudget) {
+          setAiTokenBudget(res.aiTokenBudget);
+          setAiMonthlyLimitInput(String(res.aiTokenBudget.monthlyLimit));
+        }
       } catch (err) {
         setFeedback({
           type: 'err',
@@ -179,6 +187,7 @@ export function SettingsPage() {
     try {
       const res = await platformApi.saveAiProviderKey({ provider, apiKey: rawKey });
       setAiProviders(res.aiProviders);
+      setAiTokenBudget(res.aiTokenBudget);
       setAiKeyInputs((prev) => ({ ...prev, [provider]: '' }));
       setFeedback({
         type: 'ok',
@@ -201,6 +210,7 @@ export function SettingsPage() {
     try {
       const res = await platformApi.deleteAiProviderKey(provider);
       setAiProviders(res.aiProviders);
+      setAiTokenBudget(res.aiTokenBudget);
       setFeedback({ type: 'ok', text: `Credencial de ${label} eliminada del panel.` });
     } catch (err) {
       setFeedback({
@@ -209,6 +219,37 @@ export function SettingsPage() {
       });
     } finally {
       setSavingAiProvider(null);
+    }
+  }
+
+  async function handleSaveAiBudget(resetUsage = false): Promise<void> {
+    if (!canManageWebhooks || isSavingBudget) return;
+    const parsedLimit = Math.max(0, Math.floor(Number(aiMonthlyLimitInput) || 0));
+    setIsSavingBudget(true);
+    setFeedback(null);
+    try {
+      const res = await platformApi.saveAiTokenBudget({
+        monthlyLimit: parsedLimit,
+        ...(resetUsage ? { resetUsage: true } : {})
+      });
+      setAiTokenBudget(res.aiTokenBudget);
+      setAiMonthlyLimitInput(String(res.aiTokenBudget.monthlyLimit));
+      setFeedback({
+        type: 'ok',
+        text: resetUsage
+          ? 'Contador mensual de tokens reiniciado y presupuesto guardado.'
+          : 'Presupuesto mensual de tokens actualizado.'
+      });
+    } catch (err) {
+      setFeedback({
+        type: 'err',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'No se pudo guardar el límite de tokens IA.'
+      });
+    } finally {
+      setIsSavingBudget(false);
     }
   }
 
@@ -404,6 +445,77 @@ export function SettingsPage() {
                 </div>
               </form>
             ))}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-soft-line bg-soft-bg p-4 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <strong className="text-soft-ink">
+                  Control de Consumo Mensual de Tokens ({aiTokenBudget?.periodKey ?? 'Mes actual'})
+                </strong>
+                <p className="mt-0.5 text-[11px] text-soft-muted">
+                  Establece un límite máximo de tokens por mes para tu organización (usa <strong>0</strong> para sin límite).
+                </p>
+              </div>
+              <div className="font-mono text-xs font-extrabold text-soft-blue">
+                {(aiTokenBudget?.tokensUsed ?? 0).toLocaleString()} /{' '}
+                {aiTokenBudget && aiTokenBudget.monthlyLimit > 0
+                  ? aiTokenBudget.monthlyLimit.toLocaleString()
+                  : '∞ Ilimitado'}
+              </div>
+            </div>
+
+            {aiTokenBudget && aiTokenBudget.monthlyLimit > 0 ? (
+              <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-soft-line">
+                <div
+                  className={`h-full transition-all ${
+                    aiTokenBudget.tokensUsed >= aiTokenBudget.monthlyLimit
+                      ? 'bg-soft-danger'
+                      : 'bg-brand-gradient'
+                  }`}
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round((aiTokenBudget.tokensUsed / aiTokenBudget.monthlyLimit) * 100)
+                    )}%`
+                  }}
+                />
+              </div>
+            ) : null}
+
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <div className="min-w-[200px] flex-1">
+                <label htmlFor="ai-monthly-limit" className="mb-1 block text-[11px] font-bold text-soft-ink">
+                  Tope Mensual de Tokens (0 = Ilimitado)
+                </label>
+                <input
+                  id="ai-monthly-limit"
+                  type="number"
+                  min={0}
+                  max={100000000}
+                  step={1000}
+                  value={aiMonthlyLimitInput}
+                  onChange={(e) => setAiMonthlyLimitInput(e.target.value)}
+                  className="w-full rounded-xl border border-soft-line bg-soft-card px-3 py-2 text-xs text-soft-ink"
+                />
+              </div>
+              <button
+                type="button"
+                disabled={isSavingBudget}
+                onClick={() => void handleSaveAiBudget(false)}
+                className="min-h-[38px] rounded-xl bg-brand-gradient px-4 py-2 text-xs font-extrabold text-white shadow-brand-icon disabled:opacity-60"
+              >
+                {isSavingBudget ? 'Guardando...' : 'Guardar Límite'}
+              </button>
+              <button
+                type="button"
+                disabled={isSavingBudget}
+                onClick={() => void handleSaveAiBudget(true)}
+                className="min-h-[38px] rounded-xl border border-soft-line bg-soft-card px-3 py-2 text-xs font-bold text-soft-ink hover:border-soft-blue disabled:opacity-60"
+              >
+                Reiniciar Contador
+              </button>
+            </div>
           </div>
         </section>
       ) : null}

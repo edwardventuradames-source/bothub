@@ -71,6 +71,7 @@ model Organization {
   webhooks      WebhookConfig[]
   flows         Flow[]
   aiCredentials AiProviderCredential[]
+  aiTokenBudget AiTokenBudget?
 }
 
 model User {
@@ -339,4 +340,15 @@ model AiProviderCredential {
   updatedAt       DateTime     @updatedAt
 
   @@unique([organizationId, provider])
+}
+
+model AiTokenBudget {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  monthlyLimit   Int          @default(0)
+  tokensUsed     Int          @default(0)
+  periodKey      String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 }

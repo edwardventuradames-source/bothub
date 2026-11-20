@@ -94,9 +94,12 @@ describe('AI Provider Credentials & AI_PROMPT Node Testing', () => {
         const headers = (init?.headers ?? {}) as Record<string, string>;
         if (urlStr.includes('api.openai.com')) {
           expect(headers.Authorization).toBe('Bearer sk-proj-orgA-secret-99887766');
+          const reqBody = JSON.parse(String(init?.body ?? '{}')) as { max_tokens?: number };
+          expect(reqBody.max_tokens).toBe(256);
           return new Response(
             JSON.stringify({
-              choices: [{ message: { content: 'Hola, soy tu asistente de ByteMV.' } }]
+              choices: [{ message: { content: 'Hola, soy tu asistente de ByteMV.' } }],
+              usage: { prompt_tokens: 40, completion_tokens: 20, total_tokens: 60 }
             }),
             { status: 200, headers: { 'Content-Type': 'application/json' } }
           );
@@ -124,6 +127,7 @@ describe('AI Provider Credentials & AI_PROMPT Node Testing', () => {
             position: { x: 0, y: 0 },
             data: {
               model: 'gpt-4o-mini',
+              maxTokens: 256,
               systemPrompt: 'Responde corto a {{nombre}}.',
               userPrompt: 'Consulta de {{nombre}}'
             }
@@ -139,11 +143,57 @@ describe('AI Provider Credentials & AI_PROMPT Node Testing', () => {
         provider: string;
         text: string;
         keySource: string;
+        usage?: { promptTokens: number; completionTokens: number; totalTokens: number } | null;
       };
       expect(openAiBody.ok).toBe(true);
       expect(openAiBody.provider).toBe('openai');
       expect(openAiBody.keySource).toBe('organization');
       expect(openAiBody.text).toBe('Hola, soy tu asistente de ByteMV.');
+      expect(openAiBody.usage?.totalTokens).toBe(60);
+
+      const budgetSetRes = await app.inject({
+        method: 'PUT',
+        url: '/api/settings/ai-budget',
+        headers: { authorization: `Bearer ${tokenA}` },
+        payload: { monthlyLimit: 50 }
+      });
+      expect(budgetSetRes.statusCode).toBe(200);
+      const budgetSetBody = budgetSetRes.json() as {
+        aiTokenBudget: { monthlyLimit: number; tokensUsed: number };
+      };
+      expect(budgetSetBody.aiTokenBudget.monthlyLimit).toBe(50);
+      expect(budgetSetBody.aiTokenBudget.tokensUsed).toBe(60);
+
+      const blockedByBudgetRes = await app.inject({
+        method: 'POST',
+        url: `/api/flows/${flowId}/test-ai`,
+        headers: { authorization: `Bearer ${tokenA}` },
+        payload: {
+          node: {
+            id: 'ai-budget-block',
+            type: 'AI_PROMPT',
+            position: { x: 0, y: 0 },
+            data: { model: 'gpt-4o-mini', maxTokens: 256, systemPrompt: 'Ayuda' }
+          },
+          inputMessage: 'Hola'
+        }
+      });
+      expect(blockedByBudgetRes.statusCode).toBe(200);
+      const blockedBody = blockedByBudgetRes.json() as { ok: boolean; errorMessage: string };
+      expect(blockedBody.ok).toBe(false);
+      expect(blockedBody.errorMessage).toContain('Límite mensual de tokens IA alcanzado');
+
+      const budgetResetRes = await app.inject({
+        method: 'PUT',
+        url: '/api/settings/ai-budget',
+        headers: { authorization: `Bearer ${tokenA}` },
+        payload: { monthlyLimit: 1000, resetUsage: true }
+      });
+      expect(budgetResetRes.statusCode).toBe(200);
+      expect(
+        (budgetResetRes.json() as { aiTokenBudget: { tokensUsed: number } }).aiTokenBudget
+          .tokensUsed
+      ).toBe(0);
 
       const testGeminiRes = await app.inject({
         method: 'POST',
