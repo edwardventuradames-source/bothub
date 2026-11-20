@@ -382,7 +382,7 @@ export async function processIncomingChatwootCustomerMessage(
       variables: { ...contact.variables },
       tags: [...contact.tags]
     },
-    { isLiveExecution: true }
+    { isLiveExecution: true, organizationId: bot.organizationId }
   );
 
   contact.variables = { ...simulation.variables };

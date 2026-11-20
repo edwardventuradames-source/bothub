@@ -158,3 +158,21 @@ export interface DashboardMetricsDto {
   weeklyFlowPerformance: Array<{ day: string; resolvedByBot: number; transferredToAgent: number }>;
   topTriggeredNodes: Array<{ nodeTitle: string; flowName: string; executions: number }>;
 }
+
+export const AiProviderIdSchema = z.enum(['openai', 'anthropic', 'gemini']);
+export type AiProviderId = z.infer<typeof AiProviderIdSchema>;
+
+export const UpsertAiProviderKeyInputSchema = z.object({
+  provider: AiProviderIdSchema,
+  apiKey: z.string().trim().min(10).max(300)
+});
+export type UpsertAiProviderKeyInput = z.infer<typeof UpsertAiProviderKeyInputSchema>;
+
+export interface AiProviderConfigDto {
+  provider: AiProviderId;
+  label: string;
+  hasKey: boolean;
+  maskedKey: string | null;
+  source: 'organization' | 'env' | 'none';
+  updatedAt: string | null;
+}

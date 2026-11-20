@@ -24,10 +24,12 @@ import {
 } from './persistence-flows.js';
 import {
   HydratableDbMessageRecord,
+  deleteAiCredentialFromDb,
   deleteApiKeyFromDb,
   deleteOutboundWebhookFromDb,
   isPlatformDbEnabled,
   mapDbMessageToDto,
+  syncAiCredentialToDb,
   syncApiKeyToDb,
   syncConversationMessagesToDb,
   syncLogToDb,
@@ -35,10 +37,12 @@ import {
 } from './persistence-platform.js';
 
 export {
+  deleteAiCredentialFromDb,
   deleteApiKeyFromDb,
   deleteFlowFromDb,
   deleteOutboundWebhookFromDb,
   mapDbMessageToDto,
+  syncAiCredentialToDb,
   syncApiKeyToDb,
   syncConversationMessagesToDb,
   syncFlowToDb,
@@ -46,6 +50,7 @@ export {
   syncOutboundWebhookToDb
 };
 import {
+  StoredAiCredentialRecord,
   StoredApiKeyRecord,
   StoredChatwootSecrets,
   StoredCloudApiSecrets,
@@ -127,6 +132,7 @@ export async function hydrateStoreFromDatabase(
     logs: BotLogDto[];
     apiKeys: StoredApiKeyRecord[];
     outboundWebhooks: StoredOutboundWebhookRecord[];
+    aiCredentials?: Map<string, StoredAiCredentialRecord>;
   },
   options: { forceDb?: boolean } = {}
 ): Promise<boolean> {
@@ -462,6 +468,24 @@ export async function hydrateStoreFromDatabase(
           createdAt: w.createdAt.toISOString()
         };
       });
+    }
+
+    if (target.aiCredentials) {
+      const dbAiCreds = await prisma.aiProviderCredential.findMany();
+      for (const cred of dbAiCreds) {
+        if (
+          cred.provider === 'openai' ||
+          cred.provider === 'anthropic' ||
+          cred.provider === 'gemini'
+        ) {
+          target.aiCredentials.set(`${cred.organizationId}:${cred.provider}`, {
+            organizationId: cred.organizationId,
+            provider: cred.provider,
+            encryptedApiKey: cred.encryptedApiKey,
+            updatedAt: cred.updatedAt.toISOString()
+          });
+        }
+      }
     }
 
     const standaloneFlows = await hydrateStandaloneFlowsFromDb();

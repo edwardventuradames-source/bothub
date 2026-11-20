@@ -1,4 +1,6 @@
 import {
+  AiProviderConfigDto,
+  AiProviderId,
   ApiKeyDto,
   AuthSessionResponse,
   BotDto,
@@ -23,11 +25,14 @@ import {
   OutboundWebhookConfigInput,
   ResetPasswordInput,
   SaveFlowGraphInput,
+  TestFlowAiNodeInput,
+  TestFlowAiNodeResponse,
   TestFlowHttpNodeInput,
   TestFlowHttpNodeResponse,
   UpdateBotInput,
   UpdateFlowInput,
-  UpdateUserInput
+  UpdateUserInput,
+  UpsertAiProviderKeyInput
 } from '@bothub/shared';
 import { useAuthStore } from '../store/auth.store.js';
 
@@ -250,6 +255,11 @@ export const flowsApi = {
       method: 'POST',
       body: JSON.stringify(input)
     }),
+  testAiNode: (id: string, input: TestFlowAiNodeInput) =>
+    performRequest<TestFlowAiNodeResponse>(`/flows/${id}/test-ai`, {
+      method: 'POST',
+      body: JSON.stringify(input)
+    }),
   restoreVersion: (id: string, versionId: string) =>
     performRequest<{ flow: FlowDto }>(`/flows/${id}/versions/${versionId}/restore`, {
       method: 'POST'
@@ -319,7 +329,23 @@ export const platformApi = {
     performRequest<{
       apiKeys: ApiKeyDto[];
       outboundWebhooks: OutboundWebhookConfigDto[];
+      aiProviders?: AiProviderConfigDto[];
     }>('/settings/overview'),
+  getAiProviders: () =>
+    performRequest<{ aiProviders: AiProviderConfigDto[] }>('/settings/ai-providers'),
+  saveAiProviderKey: (input: UpsertAiProviderKeyInput) =>
+    performRequest<{
+      provider: AiProviderConfigDto;
+      aiProviders: AiProviderConfigDto[];
+    }>('/settings/ai-providers', {
+      method: 'PUT',
+      body: JSON.stringify(input)
+    }),
+  deleteAiProviderKey: (provider: AiProviderId) =>
+    performRequest<{ success: boolean; aiProviders: AiProviderConfigDto[] }>(
+      `/settings/ai-providers/${provider}`,
+      { method: 'DELETE' }
+    ),
   createApiKey: (name: string, scopes: string[]) =>
     performRequest<{ apiKey: ApiKeyDto }>('/settings/api-keys', {
       method: 'POST',

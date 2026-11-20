@@ -6,6 +6,7 @@ import {
 import { prisma } from './prisma.js';
 import { logger } from './logger.js';
 import type {
+  StoredAiCredentialRecord,
   StoredApiKeyRecord,
   StoredOutboundWebhookRecord
 } from './runtime-store.js';
@@ -289,5 +290,64 @@ export async function deleteOutboundWebhookFromDb(
     });
   } catch (err) {
     logger.warn({ webhookId, err }, 'Failed deleting outbound webhook from PostgreSQL');
+  }
+}
+
+export async function syncAiCredentialToDb(
+  record: StoredAiCredentialRecord,
+  forceDb = false
+): Promise<void> {
+  if (!isPlatformDbEnabled(forceDb)) {
+    return;
+  }
+  try {
+    const orgExists = await prisma.organization.findUnique({
+      where: { id: record.organizationId },
+      select: { id: true }
+    });
+    if (!orgExists) {
+      return;
+    }
+    await prisma.aiProviderCredential.upsert({
+      where: {
+        organizationId_provider: {
+          organizationId: record.organizationId,
+          provider: record.provider
+        }
+      },
+      update: {
+        encryptedApiKey: record.encryptedApiKey
+      },
+      create: {
+        organizationId: record.organizationId,
+        provider: record.provider,
+        encryptedApiKey: record.encryptedApiKey
+      }
+    });
+  } catch (err) {
+    logger.warn(
+      { organizationId: record.organizationId, provider: record.provider, err },
+      'Failed syncing AI credential to PostgreSQL'
+    );
+  }
+}
+
+export async function deleteAiCredentialFromDb(
+  organizationId: string,
+  provider: string,
+  forceDb = false
+): Promise<void> {
+  if (!isPlatformDbEnabled(forceDb)) {
+    return;
+  }
+  try {
+    await prisma.aiProviderCredential.deleteMany({
+      where: { organizationId, provider }
+    });
+  } catch (err) {
+    logger.warn(
+      { organizationId, provider, err },
+      'Failed deleting AI credential from PostgreSQL'
+    );
   }
 }

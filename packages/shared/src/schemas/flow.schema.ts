@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AiProviderId } from './platform.schema.js';
 
 export const FlowNodeTypeSchema = z.enum([
   'TRIGGER',
@@ -121,6 +122,23 @@ export type TestFlowHttpNodeInput = z.input<typeof TestFlowHttpNodeInputSchema>;
 export interface TestFlowHttpNodeResponse {
   ok: boolean;
   httpDetails: FlowHttpExecutionLog;
+}
+
+export const TestFlowAiNodeInputSchema = z.object({
+  node: FlowNodeSchema,
+  inputMessage: z.string().max(1000).default('Hola'),
+  variables: z.record(z.string(), z.string()).default({})
+});
+export type TestFlowAiNodeInput = z.input<typeof TestFlowAiNodeInputSchema>;
+
+export interface TestFlowAiNodeResponse {
+  ok: boolean;
+  provider: AiProviderId;
+  model: string;
+  text: string;
+  errorMessage: string | null;
+  latencyMs: number;
+  keySource: 'organization' | 'env' | 'none';
 }
 
 export interface FlowExecutionStepLog {

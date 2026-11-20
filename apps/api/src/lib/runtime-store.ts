@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  AiProviderConfigDto,
+  AiProviderId,
   ApiKeyDto,
   BotDto,
   BotLogDto,
@@ -68,6 +70,29 @@ export interface StoredOutboundWebhookRecord extends OutboundWebhookConfigDto {
   encryptedSecret: string;
 }
 
+export interface StoredAiCredentialRecord {
+  organizationId: string;
+  provider: AiProviderId;
+  encryptedApiKey: string;
+  updatedAt: string;
+}
+
+const AI_PROVIDER_LABELS: Record<AiProviderId, string> = {
+  openai: 'OpenAI (GPT-4o)',
+  anthropic: 'Anthropic (Claude)',
+  gemini: 'Google Gemini'
+};
+
+const AI_PROVIDER_ENV_MAP: Record<AiProviderId, string> = {
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  gemini: 'GEMINI_API_KEY'
+};
+
+function makeAiCredentialKey(organizationId: string, provider: AiProviderId): string {
+  return `${organizationId}:${provider}`;
+}
+
 export function maskSecretValue(secret: string): string {
   if (secret.length <= 8) {
     return '••••••••';
@@ -86,6 +111,7 @@ class RuntimeStore {
   public logs: BotLogDto[] = [];
   public apiKeys: StoredApiKeyRecord[] = [];
   public outboundWebhooks: StoredOutboundWebhookRecord[] = [];
+  public aiCredentials = new Map<string, StoredAiCredentialRecord>();
   private logPersistenceHandler:
     | ((organizationId: string, entry: BotLogDto) => void)
     | null = null;
@@ -120,6 +146,7 @@ class RuntimeStore {
         logs?: BotLogDto[];
         apiKeys?: StoredApiKeyRecord[];
         outboundWebhooks?: StoredOutboundWebhookRecord[];
+        aiCredentials?: Array<[string, StoredAiCredentialRecord]>;
       };
 
       if (Array.isArray(parsed.bots)) this.bots = parsed.bots;
@@ -150,6 +177,9 @@ class RuntimeStore {
           encryptedSecret: w.encryptedSecret || ''
         }));
       }
+      if (Array.isArray(parsed.aiCredentials)) {
+        this.aiCredentials = new Map(parsed.aiCredentials);
+      }
     } catch {
       void 0;
     }
@@ -172,7 +202,8 @@ class RuntimeStore {
         contacts: this.contacts,
         logs: this.logs,
         apiKeys: this.apiKeys,
-        outboundWebhooks: this.outboundWebhooks
+        outboundWebhooks: this.outboundWebhooks,
+        aiCredentials: Array.from(this.aiCredentials.entries())
       };
       fs.writeFileSync(
         RUNTIME_STATE_FILE,
@@ -512,6 +543,78 @@ class RuntimeStore {
     return this.outboundWebhooks
       .filter((w) => w.organizationId === organizationId)
       .map(({ encryptedSecret: _enc, ...publicItem }) => publicItem);
+  }
+
+  public saveAiCredential(
+    organizationId: string,
+    provider: AiProviderId,
+    rawApiKey: string
+  ): StoredAiCredentialRecord {
+    const record: StoredAiCredentialRecord = {
+      organizationId,
+      provider,
+      encryptedApiKey: encryptSecret(rawApiKey.trim()),
+      updatedAt: new Date().toISOString()
+    };
+    this.aiCredentials.set(makeAiCredentialKey(organizationId, provider), record);
+    this.persistStateToDisk();
+    return record;
+  }
+
+  public deleteAiCredential(organizationId: string, provider: AiProviderId): boolean {
+    const deleted = this.aiCredentials.delete(makeAiCredentialKey(organizationId, provider));
+    if (deleted) {
+      this.persistStateToDisk();
+    }
+    return deleted;
+  }
+
+  public resolveAiApiKey(
+    organizationId: string | undefined,
+    provider: AiProviderId
+  ): { apiKey: string | null; source: 'organization' | 'env' | 'none' } {
+    if (organizationId) {
+      const stored = this.aiCredentials.get(makeAiCredentialKey(organizationId, provider));
+      if (stored?.encryptedApiKey) {
+        try {
+          const decrypted = decryptSecret(stored.encryptedApiKey).trim();
+          if (decrypted.length > 0) {
+            return { apiKey: decrypted, source: 'organization' };
+          }
+        } catch {
+          void 0;
+        }
+      }
+    }
+    const envVarName = AI_PROVIDER_ENV_MAP[provider];
+    const envValue = process.env[envVarName]?.trim();
+    if (envValue) {
+      return { apiKey: envValue, source: 'env' };
+    }
+    return { apiKey: null, source: 'none' };
+  }
+
+  public getAiCredentialStatus(
+    organizationId: string,
+    provider: AiProviderId
+  ): AiProviderConfigDto {
+    const stored = this.aiCredentials.get(makeAiCredentialKey(organizationId, provider));
+    const resolved = this.resolveAiApiKey(organizationId, provider);
+    return {
+      provider,
+      label: AI_PROVIDER_LABELS[provider],
+      hasKey: resolved.apiKey !== null,
+      maskedKey: resolved.apiKey ? maskSecretValue(resolved.apiKey) : null,
+      source: resolved.source,
+      updatedAt: stored?.updatedAt ?? null
+    };
+  }
+
+  public getAllAiProviderStatuses(organizationId: string): AiProviderConfigDto[] {
+    const providers: AiProviderId[] = ['openai', 'gemini', 'anthropic'];
+    return providers.map((provider) =>
+      this.getAiCredentialStatus(organizationId, provider)
+    );
   }
 
   public syncBotLiveCounters(organizationId?: string): void {

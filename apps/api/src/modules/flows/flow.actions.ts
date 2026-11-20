@@ -1,4 +1,5 @@
-import { FlowHttpExecutionLog, FlowNode } from '@bothub/shared';
+import { AiProviderId, FlowHttpExecutionLog, FlowNode } from '@bothub/shared';
+import { runtimeStore } from '../../lib/runtime-store.js';
 import {
   pinnedSafeFetch,
   resolveAndPinExternalUrl
@@ -9,6 +10,7 @@ import {
 } from './flow-evaluators.js';
 
 const ACTION_HTTP_TIMEOUT_MS = 8000;
+const AI_HTTP_TIMEOUT_MS = 20000;
 const MAX_RESPONSE_PREVIEW_CHARS = 1200;
 const MAX_RESPONSE_LOG_CHARS = 4000;
 const MAX_RESPONSE_BYTES = 262144;
@@ -454,38 +456,94 @@ export async function executeHttpRequestNode(
   }
 }
 
+export function resolveAiProviderFromModel(model: string): AiProviderId {
+  const lower = model.trim().toLowerCase();
+  if (lower.startsWith('claude')) {
+    return 'anthropic';
+  }
+  if (lower.startsWith('gemini')) {
+    return 'gemini';
+  }
+  return 'openai';
+}
+
+function buildMissingAiKeyMessage(provider: AiProviderId): string {
+  if (provider === 'anthropic') {
+    return 'Falta API Key de Anthropic (ANTHROPIC_API_KEY). Configúrala en Configuración > Inteligencia Artificial.';
+  }
+  if (provider === 'gemini') {
+    return 'Falta API Key de Gemini (GEMINI_API_KEY). Configúrala en Configuración > Inteligencia Artificial.';
+  }
+  return 'Falta API Key de OpenAI (OPENAI_API_KEY). Configúrala en Configuración > Inteligencia Artificial.';
+}
+
+async function extractAiHttpErrorMessage(
+  providerLabel: string,
+  response: Response
+): Promise<string> {
+  try {
+    const raw = await response.text();
+    const parsed = JSON.parse(raw) as { error?: { message?: string }; message?: string };
+    const upstreamMsg = parsed.error?.message || parsed.message;
+    if (typeof upstreamMsg === 'string' && upstreamMsg.trim().length > 0) {
+      return `${providerLabel} HTTP ${response.status}: ${upstreamMsg.trim().slice(0, 180)}`;
+    }
+  } catch {
+    void 0;
+  }
+  return `${providerLabel} API HTTP ${response.status}`;
+}
+
 export async function executeAiPromptNode(
   node: FlowNode,
   variables: Record<string, string>,
-  latestInput: string
+  latestInput: string,
+  organizationId?: string
 ): Promise<{
   ok: boolean;
+  provider: AiProviderId;
   model: string;
   text: string;
   errorMessage: string | null;
+  latencyMs: number;
+  keySource: 'organization' | 'env' | 'none';
 }> {
-  const model = String(node.data.model ?? 'gpt-4o-mini').trim();
+  const startedAt = Date.now();
+  const model = String(node.data.model ?? 'gpt-4o-mini').trim() || 'gpt-4o-mini';
+  const provider = resolveAiProviderFromModel(model);
   const rawSystemPrompt = String(
     node.data.systemPrompt ?? 'Eres un asistente útil y amable.'
   );
   const systemPrompt = interpolateTemplate(rawSystemPrompt, variables);
-  const userMessage = latestInput.trim() || variables.ultimo_mensaje || '';
+  const rawUserPrompt =
+    typeof node.data.userPrompt === 'string' ? node.data.userPrompt.trim() : '';
+  const userMessage =
+    (rawUserPrompt ? interpolateTemplate(rawUserPrompt, variables).trim() : '') ||
+    latestInput.trim() ||
+    variables.ultimo_mensaje ||
+    'Hola';
+
+  const { apiKey, source: keySource } = runtimeStore.resolveAiApiKey(
+    organizationId,
+    provider
+  );
+  if (!apiKey) {
+    return {
+      ok: false,
+      provider,
+      model,
+      text: '',
+      errorMessage: buildMissingAiKeyMessage(provider),
+      latencyMs: Date.now() - startedAt,
+      keySource
+    };
+  }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ACTION_HTTP_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), AI_HTTP_TIMEOUT_MS);
 
   try {
-    if (model.startsWith('claude')) {
-      const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
-      if (!apiKey) {
-        return {
-          ok: false,
-          model,
-          text: '',
-          errorMessage: 'ANTHROPIC_API_KEY no está configurada en el servidor.'
-        };
-      }
-
+    if (provider === 'anthropic') {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -505,9 +563,12 @@ export async function executeAiPromptNode(
       if (!response.ok) {
         return {
           ok: false,
+          provider,
           model,
           text: '',
-          errorMessage: `Anthropic API HTTP ${response.status}`
+          errorMessage: await extractAiHttpErrorMessage('Anthropic', response),
+          latencyMs: Date.now() - startedAt,
+          keySource
         };
       }
 
@@ -515,20 +576,18 @@ export async function executeAiPromptNode(
         content?: Array<{ type?: string; text?: string }>;
       };
       const text = data.content?.find((c) => c.type === 'text')?.text?.trim() ?? '';
-      return { ok: text.length > 0, model, text, errorMessage: text ? null : 'Respuesta vacía de Anthropic' };
+      return {
+        ok: text.length > 0,
+        provider,
+        model,
+        text,
+        errorMessage: text ? null : 'Respuesta vacía de Anthropic',
+        latencyMs: Date.now() - startedAt,
+        keySource
+      };
     }
 
-    if (model.startsWith('gemini')) {
-      const apiKey = process.env.GEMINI_API_KEY?.trim();
-      if (!apiKey) {
-        return {
-          ok: false,
-          model,
-          text: '',
-          errorMessage: 'GEMINI_API_KEY no está configurada en el servidor.'
-        };
-      }
-
+    if (provider === 'gemini') {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -546,26 +605,31 @@ export async function executeAiPromptNode(
       if (!response.ok) {
         return {
           ok: false,
+          provider,
           model,
           text: '',
-          errorMessage: `Gemini API HTTP ${response.status}`
+          errorMessage: await extractAiHttpErrorMessage('Gemini', response),
+          latencyMs: Date.now() - startedAt,
+          keySource
         };
       }
 
       const data = (await response.json()) as {
         candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
       };
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
-      return { ok: text.length > 0, model, text, errorMessage: text ? null : 'Respuesta vacía de Gemini' };
-    }
-
-    const openaiKey = process.env.OPENAI_API_KEY?.trim();
-    if (!openaiKey) {
+      const text =
+        data.candidates?.[0]?.content?.parts
+          ?.map((p) => p.text ?? '')
+          .join('')
+          .trim() ?? '';
       return {
-        ok: false,
+        ok: text.length > 0,
+        provider,
         model,
-        text: '',
-        errorMessage: 'OPENAI_API_KEY no está configurada en el servidor.'
+        text,
+        errorMessage: text ? null : 'Respuesta vacía de Gemini',
+        latencyMs: Date.now() - startedAt,
+        keySource
       };
     }
 
@@ -573,7 +637,7 @@ export async function executeAiPromptNode(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${openaiKey}`
+        Authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
         model,
@@ -589,9 +653,12 @@ export async function executeAiPromptNode(
     if (!response.ok) {
       return {
         ok: false,
+        provider,
         model,
         text: '',
-        errorMessage: `OpenAI API HTTP ${response.status}`
+        errorMessage: await extractAiHttpErrorMessage('OpenAI', response),
+        latencyMs: Date.now() - startedAt,
+        keySource
       };
     }
 
@@ -599,13 +666,24 @@ export async function executeAiPromptNode(
       choices?: Array<{ message?: { content?: string } }>;
     };
     const text = data.choices?.[0]?.message?.content?.trim() ?? '';
-    return { ok: text.length > 0, model, text, errorMessage: text ? null : 'Respuesta vacía de OpenAI' };
+    return {
+      ok: text.length > 0,
+      provider,
+      model,
+      text,
+      errorMessage: text ? null : 'Respuesta vacía de OpenAI',
+      latencyMs: Date.now() - startedAt,
+      keySource
+    };
   } catch (err) {
     return {
       ok: false,
+      provider,
       model,
       text: '',
-      errorMessage: err instanceof Error ? err.message : 'Error consultando proveedor IA'
+      errorMessage: err instanceof Error ? err.message : 'Error consultando proveedor IA',
+      latencyMs: Date.now() - startedAt,
+      keySource
     };
   } finally {
     clearTimeout(timer);

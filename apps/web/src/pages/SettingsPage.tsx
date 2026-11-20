@@ -1,6 +1,11 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { KeyRound, Lock, Palette, Plus, Trash2, Webhook } from 'lucide-react';
-import { ApiKeyDto, OutboundWebhookConfigDto } from '@bothub/shared';
+import { Bot, KeyRound, Lock, Palette, Plus, Trash2, Webhook } from 'lucide-react';
+import {
+  AiProviderConfigDto,
+  AiProviderId,
+  ApiKeyDto,
+  OutboundWebhookConfigDto
+} from '@bothub/shared';
 import { platformApi } from '../lib/api.js';
 import { useAuthStore } from '../store/auth.store.js';
 import { SidebarAccentColor, useThemeStore } from '../store/theme.store.js';
@@ -15,6 +20,13 @@ export function SettingsPage() {
 
   const [apiKeys, setApiKeys] = useState<ApiKeyDto[]>([]);
   const [webhooks, setWebhooks] = useState<OutboundWebhookConfigDto[]>([]);
+  const [aiProviders, setAiProviders] = useState<AiProviderConfigDto[]>([]);
+  const [aiKeyInputs, setAiKeyInputs] = useState<Record<AiProviderId, string>>({
+    openai: '',
+    gemini: '',
+    anthropic: ''
+  });
+  const [savingAiProvider, setSavingAiProvider] = useState<AiProviderId | null>(null);
   const [newKeyName, setNewKeyName] = useState('');
   const [generatedRawKey, setGeneratedRawKey] = useState<string | null>(null);
 
@@ -37,6 +49,7 @@ export function SettingsPage() {
         const res = await platformApi.getSettingsOverview();
         setApiKeys(res.apiKeys);
         setWebhooks(res.outboundWebhooks);
+        setAiProviders(res.aiProviders ?? []);
       } catch (err) {
         setFeedback({
           type: 'err',
@@ -148,6 +161,57 @@ export function SettingsPage() {
     }
   }
 
+  async function handleSaveAiKey(
+    event: FormEvent<HTMLFormElement>,
+    provider: AiProviderId
+  ): Promise<void> {
+    event.preventDefault();
+    const rawKey = aiKeyInputs[provider].trim();
+    if (!canManageWebhooks || savingAiProvider || rawKey.length < 10) {
+      setFeedback({
+        type: 'err',
+        text: 'Ingresa una API Key válida (mínimo 10 caracteres).'
+      });
+      return;
+    }
+    setSavingAiProvider(provider);
+    setFeedback(null);
+    try {
+      const res = await platformApi.saveAiProviderKey({ provider, apiKey: rawKey });
+      setAiProviders(res.aiProviders);
+      setAiKeyInputs((prev) => ({ ...prev, [provider]: '' }));
+      setFeedback({
+        type: 'ok',
+        text: `API Key de ${res.provider.label} guardada y cifrada con AES-256-GCM.`
+      });
+    } catch (err) {
+      setFeedback({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'No se pudo guardar la API Key de IA.'
+      });
+    } finally {
+      setSavingAiProvider(null);
+    }
+  }
+
+  async function handleDeleteAiKey(provider: AiProviderId, label: string): Promise<void> {
+    if (!canManageWebhooks || savingAiProvider) return;
+    setSavingAiProvider(provider);
+    setFeedback(null);
+    try {
+      const res = await platformApi.deleteAiProviderKey(provider);
+      setAiProviders(res.aiProviders);
+      setFeedback({ type: 'ok', text: `Credencial de ${label} eliminada del panel.` });
+    } catch (err) {
+      setFeedback({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'No se pudo eliminar la credencial IA.'
+      });
+    } finally {
+      setSavingAiProvider(null);
+    }
+  }
+
   const accents: Array<{ id: SidebarAccentColor; label: string }> = [
     { id: 'blue', label: 'Soft Blue' },
     { id: 'purple', label: 'Soft Purple' },
@@ -245,6 +309,103 @@ export function SettingsPage() {
             Cerrar
           </button>
         </div>
+      ) : null}
+
+      {canManageWebhooks ? (
+        <section className="soft-card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-extrabold text-soft-ink">
+                <Bot className="h-4 w-4 text-soft-blue" />
+                <span>Proveedores de Inteligencia Artificial (Nodos IA)</span>
+              </div>
+              <p className="mt-0.5 text-xs text-soft-muted">
+                Conecta tu API Key de OpenAI, Google Gemini o Anthropic Claude para habilitar nodos IA en tus flujos. Se guardan cifradas con AES-256-GCM.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+            {aiProviders.map((prov) => (
+              <form
+                key={prov.provider}
+                onSubmit={(e) => void handleSaveAiKey(e, prov.provider)}
+                className="flex flex-col justify-between gap-3 rounded-2xl border border-soft-line bg-soft-bg p-4 text-xs"
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <strong className="text-soft-ink">{prov.label}</strong>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                        prov.hasKey
+                          ? 'bg-[#82d616]/20 text-[#4b830d] dark:text-[#82d616]'
+                          : 'bg-soft-danger/15 text-soft-danger'
+                      }`}
+                    >
+                      {prov.source === 'organization'
+                        ? 'Conectada'
+                        : prov.source === 'env'
+                          ? 'Activa (.env)'
+                          : 'Sin conectar'}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 font-mono text-[11px] text-soft-muted">
+                    {prov.maskedKey ? `Key actual: ${prov.maskedKey}` : 'Ninguna API Key configurada'}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <label htmlFor={`ai-key-${prov.provider}`} className="sr-only">
+                    API Key de {prov.label}
+                  </label>
+                  <input
+                    id={`ai-key-${prov.provider}`}
+                    type="password"
+                    autoComplete="off"
+                    placeholder={
+                      prov.provider === 'openai'
+                        ? 'sk-proj-...'
+                        : prov.provider === 'gemini'
+                          ? 'AIzaSy...'
+                          : 'sk-ant-...'
+                    }
+                    value={aiKeyInputs[prov.provider]}
+                    onChange={(e) =>
+                      setAiKeyInputs((prev) => ({
+                        ...prev,
+                        [prov.provider]: e.target.value
+                      }))
+                    }
+                    className="w-full rounded-xl border border-soft-line bg-soft-card px-3 py-2 text-xs text-soft-ink"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="submit"
+                      disabled={savingAiProvider === prov.provider}
+                      className="min-h-[38px] flex-1 rounded-xl bg-brand-gradient px-3 py-1.5 text-xs font-extrabold text-white shadow-brand-icon disabled:opacity-60"
+                    >
+                      {savingAiProvider === prov.provider
+                        ? 'Guardando...'
+                        : prov.source === 'organization'
+                          ? 'Actualizar Key'
+                          : 'Conectar API Key'}
+                    </button>
+                    {prov.source === 'organization' ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteAiKey(prov.provider, prov.label)}
+                        aria-label={`Desconectar ${prov.label}`}
+                        className="grid min-h-[38px] min-w-[38px] place-items-center rounded-xl border border-soft-line bg-soft-card text-soft-danger hover:bg-soft-danger/10"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </form>
+            ))}
+          </div>
+        </section>
       ) : null}
 
       {canManageWebhooks ? (

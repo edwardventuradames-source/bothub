@@ -5,12 +5,13 @@ import {
   FlowDto,
   FlowSimulationRequestSchema,
   SaveFlowGraphInputSchema,
+  TestFlowAiNodeInputSchema,
   TestFlowHttpNodeInputSchema,
   UpdateFlowInputSchema
 } from '@bothub/shared';
 import { DEFAULT_ORG_ID, runtimeStore } from '../../lib/runtime-store.js';
 import { deleteFlowFromDb, syncBotRecordToDb, syncFlowToDb } from '../../lib/persistence.js';
-import { executeHttpRequestNode } from './flow.actions.js';
+import { executeAiPromptNode, executeHttpRequestNode } from './flow.actions.js';
 import { executeFlowSimulationStep } from './flow.engine.js';
 
 function applyFlowBotAssignment(
@@ -471,7 +472,8 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       const result = await executeFlowSimulationStep(
         simNodes,
         simEdges,
-        parsed.data
+        parsed.data,
+        { organizationId: orgId }
       );
 
       return result;
@@ -516,6 +518,44 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         ok: httpResult.ok,
         httpDetails: httpResult.httpDetails
       };
+    }
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/:id/test-ai',
+    {
+      preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
+      schema: {
+        tags: ['Flows'],
+        summary: 'Probar un nodo AI_PROMPT con las credenciales de IA configuradas'
+      }
+    },
+    async (request, reply) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const flow = runtimeStore.flows.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
+      if (!flow) {
+        return reply.status(404).send({
+          error: 'FLOW_NOT_FOUND',
+          message: 'El flujo no existe.'
+        });
+      }
+
+      const parsed = TestFlowAiNodeInputSchema.safeParse(request.body);
+      if (!parsed.success || parsed.data.node.type !== 'AI_PROMPT') {
+        return reply.status(400).send({
+          error: 'VALIDATION_ERROR',
+          message: 'El nodo enviado debe ser de tipo AI_PROMPT con estructura válida.'
+        });
+      }
+
+      return executeAiPromptNode(
+        parsed.data.node,
+        parsed.data.variables,
+        parsed.data.inputMessage,
+        orgId
+      );
     }
   );
 

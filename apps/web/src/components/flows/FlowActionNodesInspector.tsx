@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Node } from '@xyflow/react';
-import { Play, RefreshCw, Tag } from 'lucide-react';
+import { Play, RefreshCw, Sparkles, Tag } from 'lucide-react';
 import {
+  AiProviderConfigDto,
+  AiProviderId,
   ChatwootLabelDto,
   FlowHttpExecutionLog,
   FlowNode,
-  FlowNodeType
+  FlowNodeType,
+  TestFlowAiNodeResponse
 } from '@bothub/shared';
-import { flowsApi } from '../../lib/api.js';
+import { flowsApi, platformApi } from '../../lib/api.js';
 import { HttpExecutionDetailsCard } from './HttpExecutionDetailsCard.js';
 
 interface FlowActionNodesInspectorProps {
@@ -69,6 +73,11 @@ export function FlowActionNodesInspector({
   const [isTestingHttp, setIsTestingHttp] = useState(false);
   const [httpTestResult, setHttpTestResult] = useState<FlowHttpExecutionLog | null>(null);
   const [httpTestError, setHttpTestError] = useState<string | null>(null);
+  const [aiProviders, setAiProviders] = useState<AiProviderConfigDto[]>([]);
+  const [aiTestInput, setAiTestInput] = useState('Hola, necesito información de sus servicios');
+  const [isTestingAi, setIsTestingAi] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<TestFlowAiNodeResponse | null>(null);
+  const [aiTestError, setAiTestError] = useState<string | null>(null);
 
   const detectedHttpVars = useMemo(
     () =>
@@ -92,7 +101,64 @@ export function FlowActionNodesInspector({
     setHeadersJsonError(null);
     setHttpTestResult(null);
     setHttpTestError(null);
+    setAiTestResult(null);
+    setAiTestError(null);
   }, [selectedNode.id]);
+
+  useEffect(() => {
+    if (nodeType !== 'AI_PROMPT') {
+      return;
+    }
+    let cancelled = false;
+    void platformApi
+      .getAiProviders()
+      .then((res) => {
+        if (!cancelled) {
+          setAiProviders(res.aiProviders);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAiProviders([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [nodeType]);
+
+  async function handleRunAiNodeTest(): Promise<void> {
+    if (!flowId || isTestingAi) {
+      return;
+    }
+    setIsTestingAi(true);
+    setAiTestError(null);
+    try {
+      const { label: _lbl, nodeType: _nt, ...cleanData } = selectedNode.data as Record<
+        string,
+        unknown
+      >;
+      const payloadNode: FlowNode = {
+        id: selectedNode.id,
+        type: 'AI_PROMPT',
+        position: selectedNode.position,
+        data: cleanData
+      };
+      const res = await flowsApi.testAiNode(flowId, {
+        node: payloadNode,
+        inputMessage: aiTestInput.trim() || 'Hola',
+        variables: { ultimo_mensaje: aiTestInput.trim() || 'Hola' }
+      });
+      setAiTestResult(res);
+    } catch (err) {
+      setAiTestError(
+        err instanceof Error ? err.message : 'No se pudo probar el nodo IA.'
+      );
+      setAiTestResult(null);
+    } finally {
+      setIsTestingAi(false);
+    }
+  }
 
   async function handleRunHttpNodeTest(): Promise<void> {
     if (!flowId || isTestingHttp) {
@@ -299,8 +365,48 @@ export function FlowActionNodesInspector({
   }
 
   if (nodeType === 'AI_PROMPT') {
+    const selectedModel = String(selectedNode.data.model ?? 'gpt-4o-mini');
+    const selectedProviderId: AiProviderId = selectedModel.toLowerCase().startsWith('claude')
+      ? 'anthropic'
+      : selectedModel.toLowerCase().startsWith('gemini')
+        ? 'gemini'
+        : 'openai';
+    const providerStatus = aiProviders.find((p) => p.provider === selectedProviderId);
+
     return (
       <>
+        <div
+          className={`rounded-xl border px-3 py-2.5 text-[11px] ${
+            providerStatus?.hasKey
+              ? 'border-[#82d616]/40 bg-[#82d616]/10 text-soft-ink'
+              : 'border-amber-400/50 bg-amber-500/10 text-soft-ink'
+          }`}
+        >
+          {providerStatus ? (
+            providerStatus.hasKey ? (
+              <div className="flex items-center justify-between gap-2">
+                <span>
+                  ✅ <strong>{providerStatus.label}</strong> conectado ({providerStatus.maskedKey})
+                </span>
+                <Link to="/settings" className="shrink-0 font-extrabold text-soft-blue underline">
+                  Cambiar
+                </Link>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <span>
+                  ⚠️ <strong>{providerStatus.label} no está conectado.</strong> Conecta tu API Key para que este nodo responda.
+                </span>
+                <Link to="/settings" className="font-extrabold text-soft-blue underline">
+                  Ir a Configuración → Proveedores IA →
+                </Link>
+              </div>
+            )
+          ) : (
+            <span>Verificando conexión del proveedor IA...</span>
+          )}
+        </div>
+
         <div>
           <label htmlFor="ai-prompt" className="mb-1 block text-xs font-bold text-soft-ink">
             System Prompt del Agente IA
@@ -308,8 +414,22 @@ export function FlowActionNodesInspector({
           <textarea
             id="ai-prompt"
             rows={4}
+            placeholder="Ej: Eres un asesor de ByteMV. Responde breve y usa {{nombre}}."
             value={String(selectedNode.data.systemPrompt ?? '')}
             onChange={(e) => onUpdateData('systemPrompt', e.target.value)}
+            className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
+          />
+        </div>
+        <div>
+          <label htmlFor="ai-user-prompt" className="mb-1 block text-xs font-bold text-soft-ink">
+            Prompt / Mensaje al Modelo (Opcional)
+          </label>
+          <input
+            id="ai-user-prompt"
+            type="text"
+            placeholder="Por defecto usa el mensaje del cliente ({{ultimo_mensaje}})"
+            value={String(selectedNode.data.userPrompt ?? '')}
+            onChange={(e) => onUpdateData('userPrompt', e.target.value)}
             className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
           />
         </div>
@@ -319,13 +439,22 @@ export function FlowActionNodesInspector({
           </label>
           <select
             id="ai-model"
-            value={String(selectedNode.data.model ?? 'gpt-4o-mini')}
+            value={selectedModel}
             onChange={(e) => onUpdateData('model', e.target.value)}
             className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
           >
             <option value="gpt-4o-mini">OpenAI GPT-4o Mini</option>
-            <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
+            <option value="gpt-4o">OpenAI GPT-4o</option>
+            <option value="gpt-4.1-mini">OpenAI GPT-4.1 Mini</option>
             <option value="gemini-2.5-flash">Google Gemini 2.5 Flash</option>
+            <option value="gemini-2.5-pro">Google Gemini 2.5 Pro</option>
+            <option value="claude-sonnet-4-20250514">Anthropic Claude Sonnet 4</option>
+            <option value="claude-3-5-haiku-latest">Anthropic Claude 3.5 Haiku</option>
+            {selectedModel === 'claude-3-5-sonnet-latest' ? (
+              <option value="claude-3-5-sonnet-latest">
+                Claude 3.5 Sonnet Legacy (obsoleto — cambia a Sonnet 4)
+              </option>
+            ) : null}
           </select>
         </div>
         <div>
@@ -352,6 +481,56 @@ export function FlowActionNodesInspector({
             className="w-full rounded-xl border border-soft-line bg-soft-bg px-3 py-2 text-xs text-soft-ink"
           />
         </div>
+
+        {flowId ? (
+          <div className="flex flex-col gap-2 rounded-xl border border-soft-line bg-soft-bg p-3">
+            <div className="flex items-center gap-1.5 text-[11px] font-extrabold text-soft-ink">
+              <Sparkles className="h-3.5 w-3.5 text-soft-blue" />
+              <span>Probar Respuesta IA en Vivo</span>
+            </div>
+            <input
+              type="text"
+              aria-label="Mensaje de prueba para IA"
+              value={aiTestInput}
+              onChange={(e) => setAiTestInput(e.target.value)}
+              placeholder="Escribe un mensaje de prueba..."
+              className="w-full rounded-lg border border-soft-line bg-soft-card px-2.5 py-1.5 text-xs text-soft-ink"
+            />
+            <button
+              type="button"
+              disabled={isTestingAi}
+              onClick={() => void handleRunAiNodeTest()}
+              className="inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl bg-brand-gradient px-3 py-2 text-xs font-extrabold text-white shadow-brand-icon disabled:opacity-60"
+            >
+              <Play className="h-3.5 w-3.5" />
+              <span>{isTestingAi ? 'Consultando IA...' : 'Probar Nodo IA'}</span>
+            </button>
+            {aiTestError ? (
+              <div className="rounded-lg border border-soft-danger/40 bg-soft-danger/10 p-2 text-[11px] font-bold text-soft-danger">
+                {aiTestError}
+              </div>
+            ) : null}
+            {aiTestResult ? (
+              <div
+                className={`rounded-lg border p-2.5 text-[11px] ${
+                  aiTestResult.ok
+                    ? 'border-[#82d616]/40 bg-[#82d616]/10 text-soft-ink'
+                    : 'border-soft-danger/40 bg-soft-danger/10 text-soft-danger'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 font-extrabold">
+                  <span>
+                    {aiTestResult.ok ? `✅ OK (${aiTestResult.model})` : `❌ Error (${aiTestResult.model})`}
+                  </span>
+                  <span className="font-mono text-[10px]">{aiTestResult.latencyMs}ms</span>
+                </div>
+                <p className="mt-1 whitespace-pre-wrap">
+                  {aiTestResult.ok ? aiTestResult.text : aiTestResult.errorMessage}
+                </p>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </>
     );
   }

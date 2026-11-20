@@ -38,6 +38,7 @@ const MAX_LIVE_DELAY_MS = 2500;
 
 export interface FlowExecutionOptions {
   isLiveExecution?: boolean;
+  organizationId?: string;
   onTyping?: (delayMs: number) => Promise<void>;
 }
 
@@ -468,7 +469,8 @@ export async function executeFlowSimulationStep(
         const aiResult = await executeAiPromptNode(
           activeNode,
           variables,
-          request.inputMessage
+          request.inputMessage,
+          options.organizationId
         );
 
         if (aiResult.ok) {

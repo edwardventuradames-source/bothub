@@ -507,7 +507,14 @@ export function FlowSimulatorPanel({
                           {step.httpDetails.statusCode ?? 'ERR'}
                         </span>
                       ) : null}
-                      <span className="truncate" title={step.detail}>
+                      <span
+                        className={`truncate ${
+                          step.nodeType === 'AI_PROMPT' && step.detail.startsWith('Error IA')
+                            ? 'font-bold text-soft-danger'
+                            : ''
+                        }`}
+                        title={step.detail}
+                      >
                         {step.detail}
                       </span>
                     </div>

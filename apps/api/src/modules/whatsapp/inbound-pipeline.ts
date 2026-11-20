@@ -413,6 +413,7 @@ export async function processInboundWhatsAppMessage(
     },
     {
       isLiveExecution: true,
+      organizationId: bot.organizationId,
       onTyping: params.onTyping
     }
   );
