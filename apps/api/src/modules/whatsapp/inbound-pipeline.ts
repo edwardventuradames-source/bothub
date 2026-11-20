@@ -11,7 +11,9 @@ import {
   isBotContactRateLimited,
   isDuplicateInboundMessage,
   isWithinBotBusinessHours,
-  matchBotQuickReply
+  matchBotQuickReply,
+  resolveInterReplyWaitMs,
+  waitOutgoingPacingMs
 } from '../../lib/bot-runtime-utils.js';
 import { runtimeStore } from '../../lib/runtime-store.js';
 import { syncConversationStateToDb } from '../../lib/persistence.js';
@@ -22,6 +24,7 @@ import {
 import {
   formatBotReplyForChatwoot,
   sendMessageToChatwootApi,
+  shouldCallRemoteChatwoot,
   toggleChatwootConversationStatusApi
 } from '../chatwoot/chatwoot.client.js';
 import { syncAssignedFlowLabelsToChatwoot } from '../chatwoot/chatwoot-labels.js';
@@ -446,7 +449,30 @@ export async function processInboundWhatsAppMessage(
     });
   }
 
-  for (const reply of simulation.replies) {
+  for (let i = 0; i < simulation.replies.length; i += 1) {
+    const reply = simulation.replies[i];
+    if (i > 0 && process.env.NODE_ENV !== 'test') {
+      const prevReply = simulation.replies[i - 1];
+      const hasRemoteChatwootMirror = Boolean(
+        cwConfig &&
+          cwSecrets &&
+          cwConfig.isActive &&
+          conversation.chatwootConversationId &&
+          shouldCallRemoteChatwoot(cwConfig.baseUrl, conversation.chatwootConversationId)
+      );
+      if (params.sendReply || hasRemoteChatwootMirror) {
+        const waitMs = resolveInterReplyWaitMs({
+          previousHadMedia: Boolean(prevReply.mediaUrl),
+          nextDelayMs: reply.delayMs,
+          viaChatwoot: hasRemoteChatwootMirror
+        });
+        if (reply.delayMs && reply.delayMs > 0 && params.onTyping) {
+          await params.onTyping(reply.delayMs);
+        }
+        await waitOutgoingPacingMs(waitMs);
+      }
+    }
+
     await deliverWhatsAppReply(
       bot,
       contact,

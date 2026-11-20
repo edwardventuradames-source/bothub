@@ -66,6 +66,17 @@ export async function executeFlowSimulationStep(
   let handoffSummary: string | null = null;
   let completed = false;
   let awaitingQuestionNodeId: string | null = null;
+  let pendingReplyDelayMs = 0;
+
+  const enqueueReply = (reply: Omit<FlowSimulationBotReply, 'id'>): void => {
+    const entry: FlowSimulationBotReply = {
+      id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+      ...reply,
+      ...(pendingReplyDelayMs > 0 ? { delayMs: pendingReplyDelayMs } : {})
+    };
+    pendingReplyDelayMs = 0;
+    replies.push(entry);
+  };
 
   const buildResult = (nextNodeId: string | null): FlowSimulationResponse => ({
     replies,
@@ -266,8 +277,7 @@ export async function executeFlowSimulationStep(
           ? interpolateFlowVariables(rawMediaUrl, variables).trim()
           : '';
         const hasValidMediaUrl = /^https?:\/\/.+/i.test(renderedMediaUrl);
-        replies.push({
-          id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+        enqueueReply({
           text: renderedText,
           mediaUrl: hasValidMediaUrl ? renderedMediaUrl : undefined,
           mediaType: hasValidMediaUrl ? inferFlowMediaType(renderedMediaUrl) : undefined
@@ -293,8 +303,7 @@ export async function executeFlowSimulationStep(
         const questionVarName =
           String(activeNode.data.variableName || 'respuesta').replace(/[{}\s]/g, '') ||
           'respuesta';
-        replies.push({
-          id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+        enqueueReply({
           text: promptText
         });
         trace.push({
@@ -316,8 +325,7 @@ export async function executeFlowSimulationStep(
         const buttons = Array.isArray(activeNode.data.buttons)
           ? (activeNode.data.buttons as Array<{ id: string; label: string }>)
           : [];
-        replies.push({
-          id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+        enqueueReply({
           text: bodyText,
           buttons
         });
@@ -344,8 +352,7 @@ export async function executeFlowSimulationStep(
               description?: string;
             }>)
           : [];
-        replies.push({
-          id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+        enqueueReply({
           text: bodyText,
           listItems
         });
@@ -385,12 +392,19 @@ export async function executeFlowSimulationStep(
           : 1;
         const delayMs = Math.round(boundedSeconds * 1000);
 
-        if (options.isLiveExecution && delayMs > 0) {
-          if (options.onTyping) {
-            await options.onTyping(delayMs);
-          }
+        if (delayMs > 0) {
           const boundedLiveWait = Math.min(delayMs, MAX_LIVE_DELAY_MS);
-          await new Promise((resolve) => setTimeout(resolve, boundedLiveWait));
+          if (replies.length === 0 && options.isLiveExecution) {
+            if (options.onTyping) {
+              await options.onTyping(boundedLiveWait);
+            }
+            await new Promise((resolve) => setTimeout(resolve, boundedLiveWait));
+          } else {
+            pendingReplyDelayMs = Math.min(
+              pendingReplyDelayMs + boundedLiveWait,
+              MAX_LIVE_DELAY_MS
+            );
+          }
         }
 
         trace.push({
@@ -460,8 +474,7 @@ export async function executeFlowSimulationStep(
         if (aiResult.ok) {
           variables[saveVar] = aiResult.text;
           delete variables[`${saveVar}_error`];
-          replies.push({
-            id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+          enqueueReply({
             text: aiResult.text
           });
           trace.push({
@@ -479,8 +492,7 @@ export async function executeFlowSimulationStep(
               ? interpolateFlowVariables(activeNode.data.fallbackMessage, variables)
               : null;
           if (fallbackText) {
-            replies.push({
-              id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+            enqueueReply({
               text: fallbackText
             });
           }
@@ -537,8 +549,7 @@ export async function executeFlowSimulationStep(
           ),
           variables
         );
-        replies.push({
-          id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+        enqueueReply({
           text: `👨‍💼 ${clientMessage}`
         });
         handoffRequested = true;
@@ -560,8 +571,7 @@ export async function executeFlowSimulationStep(
           String(activeNode.data.farewellMessage || '¡Gracias por contactarnos!'),
           variables
         );
-        replies.push({
-          id: `reply-${crypto.randomUUID().slice(0, 8)}`,
+        enqueueReply({
           text: farewell
         });
         completed = true;

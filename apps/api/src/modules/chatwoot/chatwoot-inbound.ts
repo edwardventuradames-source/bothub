@@ -9,7 +9,9 @@ import {
   isBotContactRateLimited,
   isDuplicateInboundMessage,
   isWithinBotBusinessHours,
-  matchBotQuickReply
+  matchBotQuickReply,
+  resolveInterReplyWaitMs,
+  waitOutgoingPacingMs
 } from '../../lib/bot-runtime-utils.js';
 import { runtimeStore } from '../../lib/runtime-store.js';
 import { syncConversationStateToDb } from '../../lib/persistence.js';
@@ -20,6 +22,7 @@ import {
 import {
   formatBotReplyForChatwoot,
   sendMessageToChatwootApi,
+  shouldCallRemoteChatwoot,
   toggleChatwootConversationStatusApi
 } from './chatwoot.client.js';
 import { syncAssignedFlowLabelsToChatwoot } from './chatwoot-labels.js';
@@ -410,7 +413,23 @@ export async function processIncomingChatwootCustomerMessage(
     io
   });
 
-  for (const reply of simulation.replies) {
+  const shouldPaceRemoteReplies = shouldCallRemoteChatwoot(
+    config.baseUrl,
+    chatwootConvId
+  );
+
+  for (let i = 0; i < simulation.replies.length; i += 1) {
+    const reply = simulation.replies[i];
+    if (i > 0 && shouldPaceRemoteReplies) {
+      const previousReply = simulation.replies[i - 1];
+      const waitMs = resolveInterReplyWaitMs({
+        previousHadMedia: Boolean(previousReply.mediaUrl),
+        nextDelayMs: reply.delayMs,
+        viaChatwoot: true
+      });
+      await waitOutgoingPacingMs(waitMs);
+    }
+
     const formattedText = formatBotReplyForChatwoot(reply);
     conversation.messages.push({
       id: reply.id,

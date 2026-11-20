@@ -4,6 +4,10 @@ import { safeRegexTest } from './safe-regex.js';
 const DEDUP_TTL_MS = 10 * 60 * 1000;
 const DEDUP_MAX_ENTRIES = 5000;
 const RATE_WINDOW_MS = 60 * 1000;
+const CHATWOOT_MEDIA_PACING_MS = 2500;
+const CHATWOOT_TEXT_PACING_MS = 550;
+const DIRECT_MEDIA_PACING_MS = 900;
+const DIRECT_TEXT_PACING_MS = 350;
 
 const processedMessageIds = new Map<string, number>();
 const inboundRateCounters = new Map<string, { count: number; windowStart: number }>();
@@ -116,4 +120,30 @@ export function matchBotQuickReply(
       return lowerInput.includes(lowerKw);
     });
   });
+}
+
+export function resolveInterReplyWaitMs(params: {
+  previousHadMedia: boolean;
+  nextDelayMs?: number;
+  viaChatwoot: boolean;
+}): number {
+  const minPacing = params.viaChatwoot
+    ? params.previousHadMedia
+      ? CHATWOOT_MEDIA_PACING_MS
+      : CHATWOOT_TEXT_PACING_MS
+    : params.previousHadMedia
+      ? DIRECT_MEDIA_PACING_MS
+      : DIRECT_TEXT_PACING_MS;
+  const requestedDelay =
+    typeof params.nextDelayMs === 'number' && Number.isFinite(params.nextDelayMs)
+      ? Math.max(0, params.nextDelayMs)
+      : 0;
+  return Math.max(minPacing, requestedDelay);
+}
+
+export async function waitOutgoingPacingMs(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
