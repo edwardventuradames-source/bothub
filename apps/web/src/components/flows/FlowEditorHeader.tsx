@@ -1,6 +1,8 @@
+import { FormEvent, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
+  Bot,
   GitBranch,
   History,
   Plus,
@@ -8,14 +10,17 @@ import {
   Save,
   Trash2
 } from 'lucide-react';
-import { FlowDto } from '@bothub/shared';
+import { BotDto, FlowDto } from '@bothub/shared';
 
 interface FlowEditorHeaderProps {
   flows: FlowDto[];
+  bots: BotDto[];
   activeFlow: FlowDto | null;
   canEditFlows: boolean;
   isSaving: boolean;
+  isUpdatingBot: boolean;
   onSelectFlow: (flowId: string) => void;
+  onAssignBot: (flowId: string, botId: string | null) => Promise<boolean>;
   onOpenCreateDialog: () => void;
   onRestoreVersion: (versionId: string) => void;
   onRequestDeleteFlow: (flow: FlowDto) => void;
@@ -25,16 +30,32 @@ interface FlowEditorHeaderProps {
 
 export function FlowEditorHeader({
   flows,
+  bots,
   activeFlow,
   canEditFlows,
   isSaving,
+  isUpdatingBot,
   onSelectFlow,
+  onAssignBot,
   onOpenCreateDialog,
   onRestoreVersion,
   onRequestDeleteFlow,
   onSaveDraft,
   onPublishVersion
 }: FlowEditorHeaderProps) {
+  const [draftBotId, setDraftBotId] = useState(activeFlow?.botId ?? '');
+
+  useEffect(() => {
+    setDraftBotId(activeFlow?.botId ?? '');
+  }, [activeFlow?.id, activeFlow?.botId]);
+
+  const hasBotChange = Boolean(activeFlow) && (activeFlow?.botId ?? '') !== draftBotId;
+
+  function handleBotFormSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    if (!activeFlow || !canEditFlows || isUpdatingBot) return;
+    void onAssignBot(activeFlow.id, draftBotId || null);
+  }
   return (
     <section className="soft-card flex flex-wrap items-center justify-between gap-4 p-5">
       <h1 className="sr-only">Editor Visual de Flujos</h1>
@@ -110,6 +131,44 @@ export function FlowEditorHeader({
                   ))}
                 </select>
               </div>
+            ) : null}
+
+            {activeFlow ? (
+              <form
+                onSubmit={handleBotFormSubmit}
+                className="inline-flex min-h-[40px] max-w-full flex-wrap items-center gap-1.5 rounded-xl border border-soft-line bg-soft-bg px-2.5 py-1"
+              >
+                <Bot className="h-3.5 w-3.5 shrink-0 text-soft-blue" />
+                <label
+                  htmlFor="flow-editor-bot-selector"
+                  className="text-[11px] font-bold text-soft-muted"
+                >
+                  Bot:
+                </label>
+                <select
+                  id="flow-editor-bot-selector"
+                  disabled={!canEditFlows || isUpdatingBot}
+                  value={draftBotId}
+                  onChange={(e) => setDraftBotId(e.target.value)}
+                  className="max-w-[180px] truncate bg-transparent text-xs font-bold text-soft-ink focus:outline-none sm:max-w-none"
+                >
+                  <option value="">Sin bot asignado</option>
+                  {bots.map((bot) => (
+                    <option key={bot.id} value={bot.id}>
+                      {bot.name} ({bot.phoneNumber || bot.driver})
+                    </option>
+                  ))}
+                </select>
+                {canEditFlows && hasBotChange ? (
+                  <button
+                    type="submit"
+                    disabled={isUpdatingBot}
+                    className="rounded-lg bg-brand-gradient px-2.5 py-1 text-[11px] font-extrabold text-white disabled:opacity-60"
+                  >
+                    {isUpdatingBot ? 'Guardando...' : 'Aplicar bot'}
+                  </button>
+                ) : null}
+              </form>
             ) : null}
 
             {canEditFlows && activeFlow ? (

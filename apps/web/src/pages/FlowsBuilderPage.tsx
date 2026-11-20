@@ -69,6 +69,7 @@ export function FlowsBuilderPage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUpdatingBot, setIsUpdatingBot] = useState(false);
   const [chatwootLabels, setChatwootLabels] = useState<ChatwootLabelDto[]>([]);
   const [isLoadingLabels, setIsLoadingLabels] = useState(false);
   const [labelsError, setLabelsError] = useState<string | null>(null);
@@ -504,6 +505,38 @@ export function FlowsBuilderPage() {
     }
   }
 
+  async function handleAssignFlowBot(
+    flowId: string,
+    botId: string | null
+  ): Promise<boolean> {
+    if (!canEditFlows || isUpdatingBot) return false;
+    setIsUpdatingBot(true);
+    try {
+      const { flow } = await flowsApi.updateMetadata(flowId, { botId });
+      const botsRes = await botsApi.list();
+      setFlows((prev) => prev.map((f) => (f.id === flow.id ? flow : f)));
+      setBots(botsRes.bots);
+      setFeedback({
+        type: 'ok',
+        text: flow.botName
+          ? `Flujo "${flow.name}" asignado al bot "${flow.botName}".`
+          : `Se desvinculó el bot del flujo "${flow.name}".`
+      });
+      return true;
+    } catch (err) {
+      setFeedback({
+        type: 'err',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'No se pudo actualizar el bot del flujo.'
+      });
+      return false;
+    } finally {
+      setIsUpdatingBot(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       {!routeFlowId ? (
@@ -512,6 +545,7 @@ export function FlowsBuilderPage() {
           bots={bots}
           isLoading={isLoading}
           canEditFlows={canEditFlows}
+          isUpdatingBot={isUpdatingBot}
           searchQuery={effectiveCatalogSearch}
           onSearchQueryChange={setCatalogSearch}
           botFilterId={catalogBotFilter}
@@ -524,15 +558,19 @@ export function FlowsBuilderPage() {
           }}
           onOpenCreateDialog={() => newFlowDialogRef.current?.showModal()}
           onRequestDeleteFlow={requestDeleteFlow}
+          onAssignBot={handleAssignFlowBot}
         />
       ) : (
         <>
           <FlowEditorHeader
             flows={flows}
+            bots={bots}
             activeFlow={activeFlow}
             canEditFlows={canEditFlows}
             isSaving={isSaving}
+            isUpdatingBot={isUpdatingBot}
             onSelectFlow={handleSelectFlow}
+            onAssignBot={handleAssignFlowBot}
             onOpenCreateDialog={() => newFlowDialogRef.current?.showModal()}
             onRestoreVersion={(verId) => void handleRestoreVersion(verId)}
             onRequestDeleteFlow={requestDeleteFlow}

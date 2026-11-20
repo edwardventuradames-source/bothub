@@ -238,7 +238,7 @@ dialog::backdrop {
   border-radius: inherit;
 }
 
-.flow-card:has(a.flow-card-link) button {
+.flow-card:has(a.flow-card-link) :is(button, select, input, label, form) {
   position: relative;
   z-index: 1;
 }

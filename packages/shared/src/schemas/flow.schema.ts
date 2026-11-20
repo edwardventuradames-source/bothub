@@ -66,6 +66,14 @@ export const CreateFlowInputSchema = z.object({
 });
 export type CreateFlowInput = z.infer<typeof CreateFlowInputSchema>;
 
+export const UpdateFlowInputSchema = z.object({
+  name: z.string().min(2).max(100).optional(),
+  description: z.string().max(400).optional(),
+  botId: z.string().nullable().optional(),
+  isMainMenu: z.boolean().optional()
+});
+export type UpdateFlowInput = z.infer<typeof UpdateFlowInputSchema>;
+
 export const SaveFlowGraphInputSchema = z.object({
   name: z.string().min(2).max(100).optional(),
   description: z.string().max(400).optional(),

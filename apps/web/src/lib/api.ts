@@ -24,6 +24,7 @@ import {
   ResetPasswordInput,
   SaveFlowGraphInput,
   UpdateBotInput,
+  UpdateFlowInput,
   UpdateUserInput
 } from '@bothub/shared';
 import { useAuthStore } from '../store/auth.store.js';
@@ -230,6 +231,11 @@ export const flowsApi = {
   saveGraph: (id: string, input: SaveFlowGraphInput) =>
     performRequest<{ flow: FlowDto }>(`/flows/${id}/graph`, {
       method: 'PUT',
+      body: JSON.stringify(input)
+    }),
+  updateMetadata: (id: string, input: UpdateFlowInput) =>
+    performRequest<{ flow: FlowDto }>(`/flows/${id}`, {
+      method: 'PATCH',
       body: JSON.stringify(input)
     }),
   simulateStep: (id: string, input: FlowSimulationRequest) =>

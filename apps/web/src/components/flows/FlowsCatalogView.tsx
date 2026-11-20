@@ -1,10 +1,11 @@
-import { useId, useMemo } from 'react';
+import { FormEvent, useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
   Bot,
   CheckCircle2,
   GitBranch,
+  Pencil,
   Plus,
   Search,
   Trash2
@@ -16,6 +17,7 @@ interface FlowsCatalogViewProps {
   bots: BotDto[];
   isLoading: boolean;
   canEditFlows: boolean;
+  isUpdatingBot: boolean;
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
   botFilterId: string;
@@ -25,6 +27,7 @@ interface FlowsCatalogViewProps {
   onClearFilters: () => void;
   onOpenCreateDialog: () => void;
   onRequestDeleteFlow: (flow: FlowDto) => void;
+  onAssignBot: (flowId: string, botId: string | null) => Promise<boolean>;
 }
 
 function formatFlowUpdatedAt(isoDate: string): string {
@@ -46,6 +49,7 @@ export function FlowsCatalogView({
   bots,
   isLoading,
   canEditFlows,
+  isUpdatingBot,
   searchQuery,
   onSearchQueryChange,
   botFilterId,
@@ -54,10 +58,24 @@ export function FlowsCatalogView({
   onDismissFeedback,
   onClearFilters,
   onOpenCreateDialog,
-  onRequestDeleteFlow
+  onRequestDeleteFlow,
+  onAssignBot
 }: FlowsCatalogViewProps) {
   const searchInputId = useId();
   const botSelectId = useId();
+  const [editingBotFlowId, setEditingBotFlowId] = useState<string | null>(null);
+  const [draftBotId, setDraftBotId] = useState<string>('');
+
+  async function handleCardBotSubmit(
+    event: FormEvent<HTMLFormElement>,
+    flowId: string
+  ): Promise<void> {
+    event.preventDefault();
+    const ok = await onAssignBot(flowId, draftBotId || null);
+    if (ok) {
+      setEditingBotFlowId(null);
+    }
+  }
 
   const filteredFlows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -278,12 +296,68 @@ export function FlowsCatalogView({
                   </p>
 
                   <div className="flex flex-col gap-2.5 self-end">
-                    <div className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-lg border border-soft-line bg-soft-bg px-2.5 py-1 text-[11px] font-bold text-soft-ink">
-                      <Bot className="h-3.5 w-3.5 shrink-0 text-soft-blue" />
-                      <span className="truncate">
-                        {flow.botName ? `Bot: ${flow.botName}` : 'Sin bot asignado'}
-                      </span>
-                    </div>
+                    {canEditFlows && editingBotFlowId === flow.id ? (
+                      <form
+                        onSubmit={(e) => void handleCardBotSubmit(e, flow.id)}
+                        className="flex flex-wrap items-center gap-1.5"
+                      >
+                        <label htmlFor={`card-bot-${flow.id}`} className="sr-only">
+                          Bot asignado a {flow.name}
+                        </label>
+                        <select
+                          id={`card-bot-${flow.id}`}
+                          value={draftBotId}
+                          disabled={isUpdatingBot}
+                          onChange={(e) => setDraftBotId(e.target.value)}
+                          className="min-h-[36px] min-w-0 flex-1 rounded-lg border border-soft-blue bg-soft-bg px-2.5 py-1 text-[11px] font-bold text-soft-ink"
+                        >
+                          <option value="">Sin bot asignado</option>
+                          {bots.map((bot) => (
+                            <option key={bot.id} value={bot.id}>
+                              {bot.name} ({bot.phoneNumber || bot.driver})
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="submit"
+                          disabled={isUpdatingBot}
+                          className="min-h-[36px] rounded-lg bg-brand-gradient px-2.5 py-1 text-[11px] font-extrabold text-white disabled:opacity-60"
+                        >
+                          {isUpdatingBot ? '...' : 'Guardar'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isUpdatingBot}
+                          onClick={() => setEditingBotFlowId(null)}
+                          className="min-h-[36px] rounded-lg border border-soft-line bg-soft-bg px-2 py-1 text-[11px] font-bold text-soft-muted hover:text-soft-ink"
+                        >
+                          Cancelar
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-soft-line bg-soft-bg px-2.5 py-1 text-[11px] font-bold text-soft-ink">
+                          <Bot className="h-3.5 w-3.5 shrink-0 text-soft-blue" />
+                          <span className="truncate">
+                            {flow.botName ? `Bot: ${flow.botName}` : 'Sin bot asignado'}
+                          </span>
+                        </div>
+                        {canEditFlows ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingBotFlowId(flow.id);
+                              setDraftBotId(flow.botId ?? '');
+                            }}
+                            aria-label={`Cambiar bot de ${flow.name}`}
+                            className="inline-flex min-h-[28px] shrink-0 items-center gap-1 rounded-lg border border-soft-line bg-soft-bg px-2 py-0.5 text-[11px] font-bold text-soft-blue hover:border-soft-blue"
+                          >
+                            <Pencil className="h-3 w-3" />
+                            <span>Cambiar bot</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
 
                     <div className="grid grid-cols-3 gap-2 rounded-xl bg-soft-bg p-2.5 text-center">
                       <div>

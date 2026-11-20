@@ -9,7 +9,7 @@ import { useAuthStore } from '../../store/auth.store.js';
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Dashboard · BotHub',
   '/bots': 'Bots de WhatsApp · BotHub',
-  '/flows': 'Editor Visual de Flujos · BotHub',
+  '/flows': 'Flujos Conversacionales · BotHub',
   '/conversations': 'Conversaciones · BotHub',
   '/contacts': 'Contactos · BotHub',
   '/logs': 'Logs en Tiempo Real · BotHub',
@@ -22,11 +22,15 @@ export function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const location = useLocation();
+  const routeTransitionKey = location.pathname.startsWith('/flows')
+    ? '/flows'
+    : location.pathname;
 
   useEffect(() => {
-    document.title =
-      PAGE_TITLES[location.pathname] ??
-      'BotHub · Plataforma de Bots de WhatsApp & Chatwoot';
+    document.title = location.pathname.startsWith('/flows/')
+      ? 'Editor Visual de Flujos · BotHub'
+      : (PAGE_TITLES[location.pathname] ??
+        'BotHub · Plataforma de Bots de WhatsApp & Chatwoot');
     setSearchQuery('');
   }, [location.pathname]);
 
@@ -50,7 +54,7 @@ export function AppLayout() {
 
         <AnimatePresence mode="wait">
           <motion.div
-            key={location.pathname}
+            key={routeTransitionKey}
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}

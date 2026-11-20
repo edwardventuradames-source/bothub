@@ -4,11 +4,52 @@ import {
   CreateFlowInputSchema,
   FlowDto,
   FlowSimulationRequestSchema,
-  SaveFlowGraphInputSchema
+  SaveFlowGraphInputSchema,
+  UpdateFlowInputSchema
 } from '@bothub/shared';
 import { DEFAULT_ORG_ID, runtimeStore } from '../../lib/runtime-store.js';
 import { deleteFlowFromDb, syncBotRecordToDb, syncFlowToDb } from '../../lib/persistence.js';
 import { executeFlowSimulationStep } from './flow.engine.js';
+
+function applyFlowBotAssignment(
+  flow: FlowDto,
+  targetBotId: string | null,
+  orgId: string
+): { ok: true } | { ok: false; error: string; message: string } {
+  const matchedBot = targetBotId
+    ? runtimeStore.bots.find(
+        (b) => b.id === targetBotId && b.organizationId === orgId
+      ) ?? null
+    : null;
+  if (targetBotId && !matchedBot) {
+    return {
+      ok: false,
+      error: 'BOT_NOT_FOUND',
+      message: 'El bot especificado no pertenece a tu organización.'
+    };
+  }
+
+  const previousBotId = flow.botId;
+  if (previousBotId && previousBotId !== (matchedBot?.id ?? null)) {
+    const previousBot = runtimeStore.bots.find(
+      (b) => b.id === previousBotId && b.organizationId === orgId
+    );
+    if (previousBot && previousBot.activeFlowId === flow.id) {
+      previousBot.activeFlowId = null;
+      previousBot.activeFlowName = null;
+      void syncBotRecordToDb(previousBot);
+    }
+  }
+
+  flow.botId = matchedBot ? matchedBot.id : null;
+  flow.botName = matchedBot ? matchedBot.name : null;
+  if (matchedBot) {
+    matchedBot.activeFlowId = flow.id;
+    matchedBot.activeFlowName = flow.name;
+    void syncBotRecordToDb(matchedBot);
+  }
+  return { ok: true };
+}
 
 export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
   app.get(
@@ -198,28 +239,25 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
       const data = parsed.data;
       const nowIso = new Date().toISOString();
 
-      let matchedBot: (typeof runtimeStore.bots)[number] | null = null;
-      if (data.botId !== undefined && data.botId !== null) {
-        matchedBot =
-          runtimeStore.bots.find(
-            (b) => b.id === data.botId && b.organizationId === orgId
-          ) ?? null;
-        if (!matchedBot) {
+      if (data.botId !== undefined) {
+        const assignment = applyFlowBotAssignment(flow, data.botId, orgId);
+        if (!assignment.ok) {
           return reply.status(404).send({
-            error: 'BOT_NOT_FOUND',
-            message: 'El bot especificado no pertenece a tu organización.'
+            error: assignment.error,
+            message: assignment.message
           });
         }
       }
 
       if (data.name !== undefined) flow.name = data.name;
       if (data.description !== undefined) flow.description = data.description;
-      if (data.botId !== undefined) {
-        flow.botId = matchedBot ? matchedBot.id : null;
-        flow.botName = matchedBot ? matchedBot.name : null;
-        if (matchedBot) {
-          matchedBot.activeFlowId = flow.id;
-          matchedBot.activeFlowName = flow.name;
+      if (flow.botId) {
+        const linkedBot = runtimeStore.bots.find(
+          (b) => b.id === flow.botId && b.organizationId === orgId
+        );
+        if (linkedBot && linkedBot.activeFlowId === flow.id) {
+          linkedBot.activeFlowName = flow.name;
+          void syncBotRecordToDb(linkedBot);
         }
       }
 
@@ -263,6 +301,76 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
           ? `Flujo "${flow.name}" publicado en versión v${flow.activeVersionNumber} (${data.nodes.length} nodos).`
           : `Borrador guardado en "${flow.name}" (${data.nodes.length} nodos, ${data.edges.length} conexiones).`
       });
+      runtimeStore.persistStateToDisk();
+      void syncFlowToDb(flow);
+
+      return { flow };
+    }
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    '/:id',
+    {
+      preHandler: [app.requireRole(['ADMIN', 'OPERATOR'])],
+      schema: {
+        tags: ['Flows'],
+        summary: 'Actualizar metadatos o cambiar el bot asignado de un flujo'
+      }
+    },
+    async (request, reply) => {
+      const orgId = request.user?.organizationId ?? DEFAULT_ORG_ID;
+      const flow = runtimeStore.flows.find(
+        (item) => item.id === request.params.id && item.organizationId === orgId
+      );
+      if (!flow) {
+        return reply.status(404).send({
+          error: 'FLOW_NOT_FOUND',
+          message: 'El flujo no existe.'
+        });
+      }
+
+      const parsed = UpdateFlowInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: 'VALIDATION_ERROR',
+          message: 'Datos inválidos para actualizar el flujo.',
+          details: parsed.error.flatten()
+        });
+      }
+
+      const data = parsed.data;
+      if (data.botId !== undefined) {
+        const assignment = applyFlowBotAssignment(flow, data.botId, orgId);
+        if (!assignment.ok) {
+          return reply.status(404).send({
+            error: assignment.error,
+            message: assignment.message
+          });
+        }
+      }
+
+      if (data.name !== undefined) flow.name = data.name;
+      if (data.description !== undefined) flow.description = data.description;
+      if (data.isMainMenu !== undefined) flow.isMainMenu = data.isMainMenu;
+
+      flow.updatedAt = new Date().toISOString();
+      for (const bot of runtimeStore.bots) {
+        if (bot.organizationId === orgId && bot.activeFlowId === flow.id) {
+          bot.activeFlowName = flow.name;
+          void syncBotRecordToDb(bot);
+        }
+      }
+
+      runtimeStore.appendLog({
+        organizationId: orgId,
+        botId: flow.botId,
+        level: 'INFO',
+        event: 'flow.updated',
+        message: flow.botName
+          ? `Flujo "${flow.name}" asignado al bot "${flow.botName}".`
+          : `Flujo "${flow.name}" actualizado (sin bot asignado).`
+      });
+      runtimeStore.persistStateToDisk();
       void syncFlowToDb(flow);
 
       return { flow };
