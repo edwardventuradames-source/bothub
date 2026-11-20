@@ -21,20 +21,46 @@ function interpolateTemplate(
   template: string,
   variables: Record<string, string>
 ): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, varName: string) => {
-    const value = variables[varName];
-    return typeof value === 'string' && value.length > 0 ? value : '';
+  return template.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, varPath: string) => {
+    const direct = variables[varPath];
+    if (typeof direct === 'string' && direct.length > 0) {
+      return direct;
+    }
+    const dotIndex = varPath.indexOf('.');
+    if (dotIndex > 0) {
+      const rootName = varPath.slice(0, dotIndex);
+      const subPath = varPath.slice(dotIndex + 1);
+      const rootRaw = variables[rootName];
+      if (typeof rootRaw === 'string' && rootRaw.trim().startsWith('{')) {
+        try {
+          const parsed = JSON.parse(rootRaw) as unknown;
+          const extracted = extractJsonPathValue(parsed, subPath);
+          if (extracted.length > 0) {
+            return extracted;
+          }
+        } catch {
+          void 0;
+        }
+      }
+    }
+    return '';
   });
 }
 
 function extractJsonPathValue(payload: unknown, pathExpr: string): string {
-  const segments = pathExpr.split('.').map((s) => s.trim()).filter(Boolean);
+  const cleanExpr = pathExpr.trim().replace(/^\$\.?/, '').replace(/\[(\d+)\]/g, '.$1');
+  const segments = cleanExpr.split('.').map((s) => s.trim()).filter(Boolean);
   let cursor: unknown = payload;
   for (const segment of segments) {
     if (cursor === null || cursor === undefined || typeof cursor !== 'object') {
       return '';
     }
-    cursor = (cursor as Record<string, unknown>)[segment];
+    if (Array.isArray(cursor)) {
+      const idx = Number(segment);
+      cursor = Number.isInteger(idx) ? cursor[idx] : undefined;
+    } else {
+      cursor = (cursor as Record<string, unknown>)[segment];
+    }
   }
   if (cursor === null || cursor === undefined) {
     return '';
@@ -127,21 +153,31 @@ export async function executeHttpRequestNode(
       };
     }
 
-    const rawText = response.text;
+    const rawText = response.text.trim();
     let extractedValue = rawText.slice(0, MAX_RESPONSE_PREVIEW_CHARS);
 
     const jsonPath = typeof node.data.responsePath === 'string' ? node.data.responsePath.trim() : '';
-    const contentType = response.headers['content-type'] ?? '';
-    if (contentType.includes('application/json') || rawText.trim().startsWith('{')) {
+    const contentType = (response.headers['content-type'] ?? '').toLowerCase();
+    const looksLikeJson =
+      contentType.includes('application/json') ||
+      rawText.startsWith('{') ||
+      rawText.startsWith('[') ||
+      rawText.startsWith('"');
+
+    if (looksLikeJson && rawText.length > 0) {
       try {
         const parsedJson = JSON.parse(rawText) as unknown;
         if (jsonPath) {
           extractedValue = extractJsonPathValue(parsedJson, jsonPath);
-        } else {
+        } else if (typeof parsedJson === 'string') {
+          extractedValue = parsedJson.slice(0, MAX_RESPONSE_PREVIEW_CHARS);
+        } else if (typeof parsedJson === 'number' || typeof parsedJson === 'boolean') {
+          extractedValue = String(parsedJson);
+        } else if (parsedJson !== null) {
           extractedValue = JSON.stringify(parsedJson).slice(0, MAX_RESPONSE_PREVIEW_CHARS);
         }
       } catch {
-        void 0;
+        extractedValue = rawText.slice(0, MAX_RESPONSE_PREVIEW_CHARS);
       }
     }
 

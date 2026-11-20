@@ -2,6 +2,7 @@ import dns from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
+import zlib from 'node:zlib';
 
 const INITIAL_NATIVE_FETCH = globalThis.fetch;
 const DEFAULT_MAX_RESPONSE_BYTES = 262144;
@@ -275,11 +276,16 @@ export async function pinnedSafeFetch(
   return new Promise((resolve, reject) => {
     const isHttps = url.protocol === 'https:';
     const transport = isHttps ? https : http;
+    const requestHeaders: Record<string, string> = {
+      'User-Agent': 'BotHub-FlowEngine/1.0',
+      'Accept-Encoding': 'gzip, deflate, br',
+      ...(options.headers ?? {})
+    };
     const req = transport.request(
       url,
       {
         method: options.method ?? 'GET',
-        headers: options.headers,
+        headers: requestHeaders,
         timeout: options.timeoutMs,
         servername: isHttps ? url.hostname : undefined,
         lookup: (_hostname, lookupOpts, callback) => {
@@ -324,11 +330,25 @@ export async function pinnedSafeFetch(
               normalizedHeaders[key.toLowerCase()] = val.join(', ');
             }
           }
+          const rawBuffer = Buffer.concat(chunks);
+          let decodedBuffer: Buffer = rawBuffer;
+          const encoding = (normalizedHeaders['content-encoding'] ?? '').toLowerCase();
+          try {
+            if (encoding.includes('gzip')) {
+              decodedBuffer = zlib.gunzipSync(rawBuffer);
+            } else if (encoding.includes('br')) {
+              decodedBuffer = zlib.brotliDecompressSync(rawBuffer);
+            } else if (encoding.includes('deflate')) {
+              decodedBuffer = zlib.inflateSync(rawBuffer);
+            }
+          } catch {
+            decodedBuffer = rawBuffer;
+          }
           resolve({
             status,
             ok: status >= 200 && status < 300,
             headers: normalizedHeaders,
-            text: Buffer.concat(chunks).toString('utf8')
+            text: decodedBuffer.toString('utf8')
           });
         };
 

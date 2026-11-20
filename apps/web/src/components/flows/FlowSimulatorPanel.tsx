@@ -1,7 +1,9 @@
 import { FormEvent, KeyboardEvent, useState } from 'react';
 import { Bot, Play, RotateCcw, Send, Sparkles, Tag } from 'lucide-react';
 import {
+  FlowEdge,
   FlowExecutionStepLog,
+  FlowNode,
   FlowSimulationBotReply
 } from '@bothub/shared';
 import { flowsApi } from '../../lib/api.js';
@@ -20,12 +22,16 @@ interface ChatBubble {
 interface FlowSimulatorPanelProps {
   flowId: string;
   flowName: string;
+  currentNodes?: FlowNode[];
+  currentEdges?: FlowEdge[];
   onHighlightNode?: (nodeId: string | null) => void;
 }
 
 export function FlowSimulatorPanel({
   flowId,
   flowName,
+  currentNodes,
+  currentEdges,
   onHighlightNode
 }: FlowSimulatorPanelProps) {
   const [messages, setMessages] = useState<ChatBubble[]>([
@@ -79,7 +85,10 @@ export function FlowSimulatorPanel({
         currentNodeId,
         awaitingQuestionNodeId,
         variables,
-        tags
+        tags,
+        ...(currentNodes && currentEdges
+          ? { nodes: currentNodes, edges: currentEdges }
+          : {})
       });
 
       const botBubbles: ChatBubble[] = response.replies.map(

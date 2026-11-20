@@ -46,14 +46,76 @@ export function resolveActiveFlowGraph(flow: FlowDto): FlowVersionDto {
   return flow.publishedVersion ?? flow.draftVersion;
 }
 
+export function sanitizeVariableName(raw: unknown, fallback: string): string {
+  const cleaned = String(raw ?? '')
+    .replace(/[{}\s]/g, '')
+    .trim();
+  return cleaned.length > 0 ? cleaned : fallback;
+}
+
+function readNestedJsonProperty(rawJson: string, subPath: string): string | null {
+  const trimmed = rawJson.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return null;
+  }
+  try {
+    let cursor: unknown = JSON.parse(trimmed);
+    const segments = subPath
+      .replace(/\[(\d+)\]/g, '.$1')
+      .split('.')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const segment of segments) {
+      if (cursor === null || cursor === undefined || typeof cursor !== 'object') {
+        return null;
+      }
+      if (Array.isArray(cursor)) {
+        const idx = Number(segment);
+        cursor = Number.isInteger(idx) ? cursor[idx] : undefined;
+      } else {
+        cursor = (cursor as Record<string, unknown>)[segment];
+      }
+    }
+    if (cursor === null || cursor === undefined) {
+      return null;
+    }
+    return typeof cursor === 'string' ? cursor : JSON.stringify(cursor);
+  } catch {
+    return null;
+  }
+}
+
+export function resolveFlowVariableValue(
+  varPath: string,
+  variables: Record<string, string>
+): string | null {
+  const direct = variables[varPath];
+  if (typeof direct === 'string' && direct.length > 0) {
+    return direct;
+  }
+  const dotIndex = varPath.indexOf('.');
+  if (dotIndex > 0) {
+    const rootName = varPath.slice(0, dotIndex);
+    const subPath = varPath.slice(dotIndex + 1);
+    const rootVal = variables[rootName];
+    if (typeof rootVal === 'string' && rootVal.length > 0) {
+      return readNestedJsonProperty(rootVal, subPath);
+    }
+  }
+  return null;
+}
+
 export function interpolateFlowVariables(
   template: string,
   variables: Record<string, string>
 ): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, varName: string) => {
-    const value = variables[varName];
-    return typeof value === 'string' && value.length > 0 ? value : `{{${varName}}}`;
-  });
+  return template.replace(
+    /\{\{\s*([a-zA-Z0-9_.\-[\]]+)\s*\}\}/g,
+    (_match, varPath: string) => {
+      const resolved = resolveFlowVariableValue(varPath, variables);
+      return typeof resolved === 'string' && resolved.length > 0 ? resolved : `{{${varPath}}}`;
+    }
+  );
 }
 
 export function validateQuestionAnswer(
@@ -115,14 +177,16 @@ export function evaluateConditionNode(
   variables: Record<string, string>,
   latestInput: string
 ): boolean {
-  const rawVariableName = String(node.data.variableName ?? '').trim();
-  const variableName = rawVariableName || 'ultimo_mensaje';
+  const variableName = sanitizeVariableName(node.data.variableName, 'ultimo_mensaje');
   const operator = String(node.data.operator ?? 'CONTAINS').toUpperCase();
-  const compareValue = String(node.data.compareValue ?? '').trim().toLowerCase();
+  const rawCompareValue = String(node.data.compareValue ?? '');
+  const interpolatedCompare = interpolateFlowVariables(rawCompareValue, variables);
+  const compareValue = interpolatedCompare.trim().toLowerCase();
+  const resolvedCandidate = resolveFlowVariableValue(variableName, variables);
   const candidateRaw = (
     variableName === 'ultimo_mensaje'
-      ? (variables[variableName] ?? latestInput ?? '')
-      : (variables[variableName] ?? '')
+      ? (resolvedCandidate ?? latestInput ?? '')
+      : (resolvedCandidate ?? '')
   ).trim();
   const candidateLower = candidateRaw.toLowerCase();
 

@@ -17,6 +17,7 @@ import {
   interpolateFlowVariables,
   resolveActiveFlowGraph,
   resolveInteractiveSelectionHandle,
+  sanitizeVariableName,
   validateQuestionAnswer
 } from './flow-evaluators.js';
 
@@ -65,6 +66,19 @@ export async function executeFlowSimulationStep(
   let handoffSummary: string | null = null;
   let completed = false;
   let awaitingQuestionNodeId: string | null = null;
+
+  const buildResult = (nextNodeId: string | null): FlowSimulationResponse => ({
+    replies,
+    nextNodeId,
+    awaitingQuestionNodeId,
+    variables,
+    tags,
+    assignedTags,
+    handoffRequested,
+    handoffSummary,
+    completed,
+    trace
+  });
 
   const findNode = (id: string | null | undefined): FlowNode | undefined =>
     id ? nodes.find((item) => item.id === id) : undefined;
@@ -291,17 +305,7 @@ export async function executeFlowSimulationStep(
           timestamp: new Date().toISOString()
         });
         awaitingQuestionNodeId = activeNode.id;
-        return {
-          replies,
-          nextNodeId: activeNode.id,
-          awaitingQuestionNodeId,
-          variables,
-          tags,
-          handoffRequested,
-          handoffSummary,
-          completed,
-          trace
-        };
+        return buildResult(activeNode.id);
       }
 
       case 'BUTTONS': {
@@ -325,17 +329,7 @@ export async function executeFlowSimulationStep(
           timestamp: new Date().toISOString()
         });
         awaitingQuestionNodeId = activeNode.id;
-        return {
-          replies,
-          nextNodeId: activeNode.id,
-          awaitingQuestionNodeId,
-          variables,
-          tags,
-          handoffRequested,
-          handoffSummary,
-          completed,
-          trace
-        };
+        return buildResult(activeNode.id);
       }
 
       case 'LIST': {
@@ -363,17 +357,7 @@ export async function executeFlowSimulationStep(
           timestamp: new Date().toISOString()
         });
         awaitingQuestionNodeId = activeNode.id;
-        return {
-          replies,
-          nextNodeId: activeNode.id,
-          awaitingQuestionNodeId,
-          variables,
-          tags,
-          handoffRequested,
-          handoffSummary,
-          completed,
-          trace
-        };
+        return buildResult(activeNode.id);
       }
 
       case 'CONDITION': {
@@ -421,7 +405,10 @@ export async function executeFlowSimulationStep(
       }
 
       case 'HTTP_REQUEST': {
-        const responseVar = String(activeNode.data.responseVariable || 'http_response');
+        const responseVar = sanitizeVariableName(
+          activeNode.data.responseVariable,
+          'http_response'
+        );
         const httpResult = await executeHttpRequestNode(activeNode, variables);
 
         if (httpResult.ok) {
@@ -450,7 +437,10 @@ export async function executeFlowSimulationStep(
       }
 
       case 'AI_PROMPT': {
-        const saveVar = String(activeNode.data.saveToVariable || 'respuesta_ia');
+        const saveVar = sanitizeVariableName(
+          activeNode.data.saveToVariable,
+          'respuesta_ia'
+        );
         const aiResult = await executeAiPromptNode(
           activeNode,
           variables,
@@ -582,16 +572,5 @@ export async function executeFlowSimulationStep(
     }
   }
 
-  return {
-    replies,
-    nextNodeId: activeNode ? activeNode.id : null,
-    awaitingQuestionNodeId,
-    variables,
-    tags,
-    assignedTags,
-    handoffRequested,
-    handoffSummary,
-    completed,
-    trace
-  };
+  return buildResult(activeNode ? activeNode.id : null);
 }

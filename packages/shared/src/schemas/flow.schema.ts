@@ -89,9 +89,11 @@ export const FlowSimulationRequestSchema = z.object({
   currentNodeId: z.string().nullable().optional(),
   awaitingQuestionNodeId: z.string().nullable().optional(),
   variables: z.record(z.string(), z.string()).default({}),
-  tags: z.array(z.string()).default([])
+  tags: z.array(z.string()).default([]),
+  nodes: z.array(FlowNodeSchema).optional(),
+  edges: z.array(FlowEdgeSchema).optional()
 });
-export type FlowSimulationRequest = z.infer<typeof FlowSimulationRequestSchema>;
+export type FlowSimulationRequest = z.input<typeof FlowSimulationRequestSchema>;
 
 export interface FlowExecutionStepLog {
   nodeId: string;

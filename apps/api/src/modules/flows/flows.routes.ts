@@ -457,9 +457,18 @@ export async function registerFlowsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
+      const simNodes =
+        Array.isArray(parsed.data.nodes) && parsed.data.nodes.length > 0
+          ? parsed.data.nodes
+          : flow.draftVersion.nodes;
+      const simEdges =
+        Array.isArray(parsed.data.edges) && parsed.data.nodes
+          ? parsed.data.edges
+          : flow.draftVersion.edges;
+
       const result = await executeFlowSimulationStep(
-        flow.draftVersion.nodes,
-        flow.draftVersion.edges,
+        simNodes,
+        simEdges,
         parsed.data
       );
 

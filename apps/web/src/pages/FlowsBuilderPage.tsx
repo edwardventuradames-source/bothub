@@ -348,31 +348,37 @@ export function FlowsBuilderPage() {
     });
   }
 
+  const serializedGraph = useMemo(() => {
+    const serializedNodes: FlowNode[] = nodes.map((n) => {
+      const { label: _lbl, nodeType, ...cleanData } = n.data as Record<
+        string,
+        unknown
+      >;
+      return {
+        id: n.id,
+        type: (nodeType as FlowNodeType) || 'MESSAGE',
+        position: n.position,
+        data: cleanData
+      };
+    });
+
+    const serializedEdges: FlowEdge[] = edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle ?? null,
+      targetHandle: e.targetHandle ?? null,
+      label: typeof e.label === 'string' ? e.label : undefined
+    }));
+
+    return { nodes: serializedNodes, edges: serializedEdges };
+  }, [nodes, edges]);
+
   async function handleSaveOrPublish(publish: boolean): Promise<void> {
     if (!activeFlow || !canEditFlows || isSaving) return;
     setIsSaving(true);
     try {
-      const serializedNodes: FlowNode[] = nodes.map((n) => {
-        const { label: _lbl, nodeType, ...cleanData } = n.data as Record<
-          string,
-          unknown
-        >;
-        return {
-          id: n.id,
-          type: (nodeType as FlowNodeType) || 'MESSAGE',
-          position: n.position,
-          data: cleanData
-        };
-      });
-
-      const serializedEdges: FlowEdge[] = edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle ?? null,
-        targetHandle: e.targetHandle ?? null,
-        label: typeof e.label === 'string' ? e.label : undefined
-      }));
+      const { nodes: serializedNodes, edges: serializedEdges } = serializedGraph;
 
       const { flow } = await flowsApi.saveGraph(activeFlow.id, {
         name: activeFlow.name,
@@ -696,6 +702,8 @@ export function FlowsBuilderPage() {
                   key={activeFlow.id}
                   flowId={activeFlow.id}
                   flowName={activeFlow.name}
+                  currentNodes={serializedGraph.nodes}
+                  currentEdges={serializedGraph.edges}
                   onHighlightNode={(nodeId) => {
                     setHighlightedNodeId(nodeId);
                     setNodes((prev) =>
